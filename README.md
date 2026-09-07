@@ -223,8 +223,16 @@ documentation. Two things worth knowing before you plan hardware:
 | Layer | State |
 |---|---|
 | Engine, RBAC, scorecard | ✅ 587 host checks, ASan + UBSan clean |
-| ESP-IDF glue, radio, UI | 🧱 not yet written |
-| Hardware bring-up | 🧱 not started |
+| Display, touch, survey | ✅ running on hardware |
+| Attack flow and transmit | ✅ built and flashed, **transmission not yet exercised** |
+| Wi-Fi families | ✅ deauth, disassoc, auth flood, beacon, probe, evil twin |
+| BLE and HID families | 🧱 shown as unavailable in the UI, not yet wired |
+| Karma responder | 🧱 needs the promiscuous receiver |
+
+The device runs the full flow — survey, target, authorisation label, family,
+PIN, arm, run, score. What has not happened yet is a real transmission at a
+real network: that needs a network the operator is authorised to test, and it
+is the one step this repo will not take on its own.
 
 ## Licence
 
