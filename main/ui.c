@@ -8,6 +8,7 @@
  */
 #include "ui.h"
 #include "display.h"
+#include "power.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -15,13 +16,38 @@
 #define W 240
 #define H 240
 
+void bas_ui_battery(void *canvas, int x, int y)
+{
+    bas_canvas_t *c = (bas_canvas_t *)canvas;
+    uint8_t pct = bas_power_level();
+
+    bas_rect(c, x, y, 18, 9, BAS_C_DIM);
+    bas_fill(c, x + 18, y + 3, 2, 3, BAS_C_DIM);
+
+    if (bas_power_charging()) {
+        /* A bolt, not a level: a bar that climbs by itself looks like a
+         * misreading rather than a charger. */
+        bas_fill(c, x + 8, y + 2, 2, 3, BAS_C_SHINE);
+        bas_fill(c, x + 6, y + 4, 6, 1, BAS_C_SHINE);
+        bas_fill(c, x + 8, y + 5, 2, 3, BAS_C_SHINE);
+        return;
+    }
+    if (pct == 0u) {
+        return;                      /* no gauge — draw the shell only */
+    }
+    uint16_t col = pct <= 20u ? BAS_C_STOP : (pct <= 40u ? BAS_C_WARN
+                                                         : BAS_C_PAPER);
+    bas_fill(c, x + 2, y + 2, (14 * pct) / 100, 5, col);
+}
+
 static void header(bas_canvas_t *c, const char *label)
 {
     bas_fill(c, 0, 0, W, 22, BAS_C_SURFACE);
     bas_text(c, 8, 8, "BASANOS", BAS_C_BRASS, 1);
+    bas_ui_battery(c, W - 28, 7);
     if (label != NULL) {
         int w = bas_text_width(label, 1);
-        bas_text(c, W - 8 - w, 8, label, BAS_C_DIM, 1);
+        bas_text(c, W - 36 - w, 8, label, BAS_C_DIM, 1);
     }
     bas_hline(c, 0, 22, W, BAS_C_FAINT);
 }
@@ -167,7 +193,7 @@ void bas_ui_picker(const bas_scan_t *s, int sel)
     }
 
     bas_hline(c, 0, H - 16, W, BAS_C_FAINT);
-    bas_text(c, 8, H - 12, "PLUS next   PWR select", BAS_C_DIM, 1);
+    bas_text(c, 8, H - 12, "RIGHT next   LEFT open", BAS_C_DIM, 1);
 
     bas_display_flush();
 }
@@ -203,7 +229,7 @@ void bas_ui_touchtest(bool present, uint8_t chip_id,
         bas_text(c, 16, 96, "Nothing answered at", BAS_C_DIM, 1);
         bas_text(c, 16, 110, "I2C address 0x15.", BAS_C_DIM, 1);
         bas_text(c, 16, 132, "Buttons still work:", BAS_C_PAPER, 1);
-        bas_text(c, 16, 146, "PLUS scrolls, MINUS", BAS_C_DIM, 1);
+        bas_text(c, 16, 146, "RIGHT scrolls, LEFT", BAS_C_DIM, 1);
         bas_text(c, 16, 160, "opens a network.", BAS_C_DIM, 1);
         bas_display_flush();
         return;
@@ -233,6 +259,6 @@ void bas_ui_touchtest(bool present, uint8_t chip_id,
     bas_text(c, W - 20 - bas_text_width(buf, 1), 202, buf,
              taps > 0 ? BAS_C_OK : BAS_C_DIM, 1);
 
-    bas_text(c, 20, 220, "PLUS to continue", BAS_C_BRASS, 1);
+    bas_text(c, 20, 220, "RIGHT to continue", BAS_C_BRASS, 1);
     bas_display_flush();
 }

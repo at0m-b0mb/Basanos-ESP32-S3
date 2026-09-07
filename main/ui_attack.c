@@ -8,6 +8,7 @@
  */
 #include "ui_attack.h"
 #include "display.h"
+#include "ui.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -19,8 +20,9 @@ static void head(bas_canvas_t *c, const char *label, uint16_t tint)
 {
     bas_fill(c, 0, 0, W, 22, BAS_C_SURFACE);
     bas_text(c, 8, 8, "BASANOS", BAS_C_BRASS, 1);
+    bas_ui_battery(c, W - 28, 7);
     if (label != NULL) {
-        bas_text(c, W - 8 - bas_text_width(label, 1), 8, label, tint, 1);
+        bas_text(c, W - 36 - bas_text_width(label, 1), 8, label, tint, 1);
     }
     bas_hline(c, 0, 22, W, BAS_C_FAINT);
 }
@@ -78,7 +80,7 @@ void bas_ui_target(const bas_ap_t *ap, int station_count)
         bas_text(c, 10, 154, "protection advertised.", BAS_C_DIM, 1);
     }
 
-    footer(c, "TAP lock target   MINUS back", BAS_C_BRASS);
+    footer(c, "LEFT lock target   hold LEFT back", BAS_C_BRASS);
     bas_display_flush();
 }
 
@@ -159,62 +161,41 @@ char bas_ui_keyboard_char(int key)
     return KB_ROWS[key / 10][key % 10];
 }
 
-/* --- PIN pad -------------------------------------------------------------- */
+/* --- hold to arm ---------------------------------------------------------- */
 
-void bas_ui_pinpad(const char *title, int entered, const char *note)
+void bas_ui_hold_arm(bas_family_t f, const bas_engagement_t *e, int pct)
 {
     bas_canvas_t *c = bas_display_canvas();
     bas_canvas_clear(c, BAS_C_BLACK);
-    head(c, "admin", BAS_C_STOP);
+    head(c, "disruptive", BAS_C_STOP);
 
-    bas_text(c, 10, 30, title, BAS_C_PAPER, 1);
-    if (note != NULL) {
-        bas_text_clip(c, 10, 44, note, BAS_C_DIM, 1, W - 20);
-    }
+    bas_text(c, 10, 32, "HOLD TO ARM", BAS_C_STOP, 2);
+    bas_text_clip(c, 10, 60, bas_family(f)->name, BAS_C_PAPER, 1, W - 20);
+    bas_text_clip(c, 10, 74, e->target.hidden ? "(hidden)" : e->target.ssid,
+                  BAS_C_DIM, 1, W - 20);
 
-    /* Dots, not digits. */
-    for (int i = 0; i < 4; i++) {
-        int x = 70 + i * 26;
-        if (i < entered) {
-            bas_fill(c, x, 62, 14, 14, BAS_C_SHINE);
-        } else {
-            bas_rect(c, x, 62, 14, 14, BAS_C_FAINT);
-        }
-    }
+    /* This family denies service to something real, so it gets a sustained
+     * deliberate act rather than a tap that could land by accident. */
+    bas_text(c, 10, 98, "This one denies service", BAS_C_DIM, 1);
+    bas_text(c, 10, 112, "to a real device.", BAS_C_DIM, 1);
 
-    static const char *keys = "123456789 0<";
-    for (int i = 0; i < 12; i++) {
-        int col = i % 3, row = i / 3;
-        int x = 24 + col * 66, y = 92 + row * 32;
-        if (keys[i] == ' ') {
-            continue;
-        }
-        bas_rect(c, x, y, 60, 28, BAS_C_SURFACE);
-        char s[2] = { keys[i], '\0' };
-        bas_text(c, x + 27, y + 10, s, BAS_C_PAPER, 1);
-    }
+    int pw = W - 20;
+    if (pct < 0)   { pct = 0; }
+    if (pct > 100) { pct = 100; }
+    bas_rect(c, 10, 134, pw, 26, BAS_C_FAINT);
+    bas_fill(c, 11, 135, (pw - 2) * pct / 100, 24,
+             pct >= 100 ? BAS_C_STOP : BAS_C_BRASS);
 
-    footer(c, "MINUS cancel", BAS_C_DIM);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d%%", pct);
+    bas_text(c, (W - bas_text_width(buf, 2)) / 2, 170, buf,
+             pct > 0 ? BAS_C_PAPER : BAS_C_DIM, 2);
+
+    bas_text(c, 10, 196, pct > 0 ? "keep holding" : "hold LEFT, or the screen",
+             BAS_C_DIM, 1);
+
+    footer(c, "release to cancel", BAS_C_DIM);
     bas_display_flush();
-}
-
-int bas_ui_pinpad_hit(uint16_t x, uint16_t y)
-{
-    if (y < 92 || y >= 92 + 4 * 32) {
-        return -1;
-    }
-    int col = ((int)x - 24) / 66;
-    int row = ((int)y - 92) / 32;
-    if (col < 0 || col > 2 || row < 0 || row > 3) {
-        return -1;
-    }
-    int i = row * 3 + col;
-    static const char *keys = "123456789 0<";
-    char k = keys[i];
-    if (k == ' ') { return -1; }
-    if (k == '<') { return -3; }
-    if (k == '0') { return 0; }
-    return k - '0';
 }
 
 /* --- family menu ---------------------------------------------------------- */
@@ -272,7 +253,7 @@ void bas_ui_families(int sel, uint8_t role, const bas_engagement_t *e)
         }
     }
 
-    footer(c, "TAP open   MINUS back", BAS_C_BRASS);
+    footer(c, "LEFT open   RIGHT next   hold back", BAS_C_BRASS);
     bas_display_flush();
 }
 
@@ -330,19 +311,19 @@ void bas_ui_family_detail(bas_family_t f, const bas_plan_t *p,
     if (gate != BAS_OK) {
         bas_text(c, 10, 162, "BLOCKED", BAS_C_STOP, 2);
         bas_text_clip(c, 10, 186, bas_err_str(gate), BAS_C_PAPER, 1, W - 20);
-        footer(c, "MINUS back", BAS_C_DIM);
+        footer(c, "hold LEFT to go back", BAS_C_DIM);
     } else if (!bas_tx_supported(f)) {
         bas_text(c, 10, 162, "UNAVAILABLE", BAS_C_WARN, 2);
         bas_text_clip(c, 10, 186, bas_tx_pending_reason(f), BAS_C_DIM, 1, W - 20);
-        footer(c, "MINUS back", BAS_C_DIM);
+        footer(c, "hold LEFT to go back", BAS_C_DIM);
     } else {
         if (p->clamped_pps || p->clamped_secs) {
             bas_text(c, 10, 162, "clamped to the ceiling", BAS_C_WARN, 1);
         }
         bas_text_clip(c, 10, 178, e->label, BAS_C_BRASS, 1, W - 20);
         footer(c, s->klass == BAS_CLASS_DISRUPTIVE
-                    ? "TAP arm (PIN)   MINUS back"
-                    : "TAP arm   MINUS back",
+                    ? "LEFT to hold-arm   hold LEFT back"
+                    : "LEFT to arm   hold LEFT back",
                s->klass == BAS_CLASS_DISRUPTIVE ? BAS_C_STOP : BAS_C_BRASS);
     }
 
@@ -366,7 +347,7 @@ void bas_ui_arm(bas_family_t f, const bas_engagement_t *e, int left)
     snprintf(buf, sizeof(buf), "%d", left);
     bas_text(c, (W - bas_text_width(buf, 8)) / 2, 116, buf, BAS_C_SHINE, 8);
 
-    footer(c, "TAP anywhere to abort", BAS_C_PAPER);
+    footer(c, "any button aborts", BAS_C_PAPER);
     bas_display_flush();
 }
 
@@ -415,7 +396,7 @@ void bas_ui_running(bas_family_t f, const bas_engagement_t *e,
         bas_text(c, 10, 196, buf, BAS_C_STOP, 1);
     }
 
-    footer(c, "TAP to stop", BAS_C_PAPER);
+    footer(c, "any button stops the run", BAS_C_PAPER);
     bas_display_flush();
 }
 
@@ -447,7 +428,7 @@ void bas_ui_ask_alarm(bas_family_t f, uint32_t frames, uint32_t grace_left_ms)
     uint32_t left = grace_left_ms > span ? span : grace_left_ms;
     bas_fill(c, 11, 183, (int)((uint32_t)(pw - 2) * left / span), 8, BAS_C_BRASS);
 
-    footer(c, "TAP alarmed   MINUS missed", BAS_C_PAPER);
+    footer(c, "LEFT alarmed   hold LEFT missed", BAS_C_PAPER);
     bas_display_flush();
 }
 
@@ -504,6 +485,6 @@ void bas_ui_scorecard(const bas_card_t *card, uint32_t now_ms)
         y += 14;
     }
 
-    footer(c, "TAP continue", BAS_C_BRASS);
+    footer(c, "LEFT to continue", BAS_C_BRASS);
     bas_display_flush();
 }

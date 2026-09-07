@@ -46,10 +46,19 @@
 #define BOARD_I2C_SDA       GPIO_NUM_42
 
 /* --- buttons ------------------------------------------------------------- */
-/* GPIO 0 is the MINUS key and also the boot strapping pin. */
+/* Three buttons, left to right across the bottom of the case. GPIO 0 is the
+ * left key and also the boot strapping pin.
+ *
+ *   left   GPIO 0   accept / select     (long press: back)
+ *   middle GPIO 5   power               (long press: off)
+ *   right  GPIO 4   change selection
+ */
 #define BOARD_BTN_MINUS     GPIO_NUM_0
 #define BOARD_BTN_PLUS      GPIO_NUM_4
 #define BOARD_BTN_PWR       GPIO_NUM_5
+
+#define BOARD_BTN_ACCEPT    BOARD_BTN_MINUS
+#define BOARD_BTN_NEXT      BOARD_BTN_PLUS
 
 /* --- power --------------------------------------------------------------- */
 #define BOARD_BAT_ADC       GPIO_NUM_1    /* ADC1 channel 0                  */

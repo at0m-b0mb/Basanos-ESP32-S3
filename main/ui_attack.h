@@ -19,10 +19,13 @@ void bas_ui_keyboard(const char *title, const char *buf);
 int  bas_ui_keyboard_hit(uint16_t x, uint16_t y);   /* -1 none, -2 done, -3 back */
 char bas_ui_keyboard_char(int key);
 
-/* Numeric pad for the arming PIN. Returns the digit, -1 none, -2 enter,
- * -3 backspace. */
-void bas_ui_pinpad(const char *title, int entered, const char *note);
-int  bas_ui_pinpad_hit(uint16_t x, uint16_t y);
+/* Hold-to-arm, for the disruptive families.
+ *
+ * Replaces a typed PIN. A sustained physical act cannot happen by accident,
+ * needs no keyboard on a 240px panel, and is over in a second and a half --
+ * the point was never to make the operator prove they can type. `pct` is 0..100.
+ */
+void bas_ui_hold_arm(bas_family_t f, const bas_engagement_t *e, int pct);
 
 /* The family menu. Unavailable families are shown greyed with the reason,
  * rather than hidden — a missing capability should be visible. */

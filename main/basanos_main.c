@@ -1,17 +1,19 @@
 /* Basanos — application entry and the flow that leads to a transmission.
  *
  *   survey -> pick one network -> name the authorisation -> lock
- *          -> pick a family -> arm (PIN for the disruptive ones)
+ *          -> pick a family -> arm (hold, for the disruptive ones)
  *          -> run -> score it
  *
  * There is no path through this file that transmits without a locked
- * engagement, and none that reaches a disruptive family without the PIN.
+ * engagement, and none that reaches a disruptive family without a sustained
+ * hold at the device.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "board.h"
 #include "display.h"
 #include "frames.h"
+#include "power.h"
 #include "selftest.h"
 #include "touch.h"
 #include "transmit.h"
@@ -27,7 +29,6 @@
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -42,21 +43,37 @@ static const char *TAG = "basanos";
 static bas_scan_t       s_scan;
 static bas_engagement_t s_engage;
 static bas_card_t       s_card;
-static char             s_pin[5];
 
 static uint32_t now_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-/* --- input --------------------------------------------------------------- */
+/* --- input ---------------------------------------------------------------
 
-static bool s_plus_down, s_minus_down;
+   Three buttons: left accepts, middle is power, right changes the selection.
+   Back is a long press on the left button, because the middle one belongs to
+   the power circuit and stealing it for navigation would make "hold to switch
+   off" ambiguous.
+   ------------------------------------------------------------------------- */
+
+typedef enum {
+    EV_NONE = 0,
+    EV_ACCEPT,
+    EV_BACK,
+    EV_NEXT,
+    EV_POWEROFF,
+} input_ev_t;
+
+#define HOLD_BACK_MS  600u
+#define HOLD_OFF_MS  1500u
 
 static void buttons_init(void)
 {
     gpio_config_t c = {
-        .pin_bit_mask = (1ULL << BOARD_BTN_PLUS) | (1ULL << BOARD_BTN_MINUS),
+        .pin_bit_mask = (1ULL << BOARD_BTN_ACCEPT) |
+                        (1ULL << BOARD_BTN_NEXT)   |
+                        (1ULL << BOARD_BTN_PWR),
         .mode         = GPIO_MODE_INPUT,
         .pull_up_en   = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -65,16 +82,63 @@ static void buttons_init(void)
     ESP_ERROR_CHECK(gpio_config(&c));
 }
 
-static bool tapped_btn(gpio_num_t pin, bool *down)
+static bool held(gpio_num_t pin) { return gpio_get_level(pin) == 0; }
+
+static input_ev_t input_poll(void)
 {
-    bool now = gpio_get_level(pin) == 0;
-    bool edge = now && !*down;
-    *down = now;
-    return edge;
+    static uint32_t accept_since, pwr_since;
+    static bool     accept_was, next_was, pwr_was, accept_fired;
+    uint32_t t = now_ms();
+
+    /* Power: acts while still held, so the operator gets the shutdown at the
+     * moment the hold completes rather than on release. */
+    bool pwr = held(BOARD_BTN_PWR);
+    if (pwr && !pwr_was) {
+        pwr_since = t;
+    }
+    pwr_was = pwr;
+    if (pwr && (t - pwr_since) >= HOLD_OFF_MS) {
+        return EV_POWEROFF;
+    }
+
+    bool a = held(BOARD_BTN_ACCEPT);
+    if (a && !accept_was) {
+        accept_since = t;
+        accept_fired = false;
+    }
+    /* Back fires on the threshold, not on release, so the operator feels the
+     * distinction between a tap and a hold without waiting to find out. */
+    if (a && !accept_fired && (t - accept_since) >= HOLD_BACK_MS) {
+        accept_fired = true;
+        accept_was = a;
+        return EV_BACK;
+    }
+    bool accept_edge = (!a && accept_was && !accept_fired);
+    accept_was = a;
+
+    bool n = held(BOARD_BTN_NEXT);
+    bool next_edge = (n && !next_was);
+    next_was = n;
+
+    if (accept_edge) { return EV_ACCEPT; }
+    if (next_edge)   { return EV_NEXT; }
+    return EV_NONE;
 }
 
-static bool btn_plus(void)  { return tapped_btn(BOARD_BTN_PLUS,  &s_plus_down);  }
-static bool btn_minus(void) { return tapped_btn(BOARD_BTN_MINUS, &s_minus_down); }
+/* Level read for the hold-to-arm gesture. */
+static bool input_held_down(void)
+{
+    if (held(BOARD_BTN_ACCEPT)) {
+        return true;
+    }
+    if (bas_touch_present()) {
+        bas_touch_t t;
+        if (bas_touch_read(&t) && t.down) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /* --- Wi-Fi --------------------------------------------------------------- */
 
@@ -187,12 +251,12 @@ static bool tx_tick(const bas_tx_result_t *p, void *ctx)
     const tx_ctx_t *c = (const tx_ctx_t *)ctx;
     bas_ui_running(c->f, &s_engage, p, c->budget);
 
-    /* A run is always interruptible, by the glass or by the button. */
+    /* A run is always interruptible, by the glass or by any button. */
     uint16_t tx, ty;
     if (bas_touch_present() && bas_touch_tapped(&tx, &ty)) {
         s_abort = true;
     }
-    if (btn_minus()) {
+    if (input_poll() != EV_NONE) {
         s_abort = true;
     }
     return !s_abort;
@@ -202,7 +266,7 @@ static bool tx_tick(const bas_tx_result_t *p, void *ctx)
 
 typedef enum {
     ST_PICK, ST_TARGET, ST_LABEL, ST_FAMILIES,
-    ST_DETAIL, ST_PIN, ST_ARM, ST_ASK, ST_CARD
+    ST_DETAIL, ST_HOLD, ST_ARM, ST_ASK, ST_CARD
 } state_t;
 
 static bool ui_tap(uint16_t *x, uint16_t *y)
@@ -215,6 +279,13 @@ static bool ui_tap(uint16_t *x, uint16_t *y)
 
 void app_main(void)
 {
+    /* FIRST. On battery the PWR button only supplies power while it is held;
+     * this latch is what keeps the rail up after it is released. Everything
+     * else — display, NVS, radio — can wait, and must, because any of it could
+     * block or fail and the board would switch itself off mid-boot. USB hides
+     * this completely, which is why it only shows up on battery. */
+    bas_power_latch();
+
     ESP_LOGI(TAG, "Basanos v%d.%d.%d", BAS_VERSION_MAJOR, BAS_VERSION_MINOR,
              BAS_VERSION_PATCH);
 
@@ -234,19 +305,11 @@ void app_main(void)
     }
 
     buttons_init();
+    bas_power_init();
     (void)bas_touch_init();
     ESP_LOGI(TAG, "touch: %s (chip 0x%02X)",
              bas_touch_present() ? "present" : "absent",
              (unsigned)bas_touch_chip_id());
-
-    /* No credential ships with the firmware. The device generates its own
-     * arming PIN and shows it on its own screen — a per-device secret the
-     * operator has to be physically present to read. */
-    snprintf(s_pin, sizeof(s_pin), "%04u", (unsigned)(esp_random() % 10000u));
-    ESP_LOGI(TAG, "arming PIN for this boot: %s", s_pin);
-    bas_ui_message("ARMING PIN", s_pin,
-                   "Needed for disruptive runs", BAS_C_SHINE);
-    vTaskDelay(pdMS_TO_TICKS(4000));
 
     wifi_init();
     survey();
@@ -260,8 +323,7 @@ void app_main(void)
     state_t st_cur = ST_PICK;
     int  net_sel = 0, fam_sel = 0;
     char label[BAS_LABEL_MAX] = {0};
-    int  pin_entered = 0;
-    char pin_buf[5] = {0};
+    uint32_t hold_start = 0;
     bas_plan_t plan;
     uint8_t role = BAS_ROLE_OPERATOR;
     int  run_idx = -1;
@@ -271,8 +333,28 @@ void app_main(void)
     while (true) {
         uint16_t tx = 0, ty = 0;
         bool tap = ui_tap(&tx, &ty);
-        bool back = btn_minus();
-        bool next = btn_plus();
+        input_ev_t ev = input_poll();
+
+        if (ev == EV_POWEROFF) {
+            bas_ui_message("POWERING OFF", NULL, NULL, BAS_C_DIM);
+            vTaskDelay(pdMS_TO_TICKS(600));
+            bas_display_backlight(0);
+            bas_power_off();
+            /* On USB the rail is held up by the cable, so dropping the latch
+             * does nothing visible. Say so rather than appearing to hang. */
+            vTaskDelay(pdMS_TO_TICKS(400));
+            bas_display_backlight(80);
+            bas_ui_message("STILL ON USB", "Unplug to switch off.", NULL,
+                           BAS_C_WARN);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            bas_power_latch();
+            redraw = true;
+            continue;
+        }
+
+        bool accept = (ev == EV_ACCEPT);
+        bool back   = (ev == EV_BACK);
+        bool next   = (ev == EV_NEXT);
 
         switch (st_cur) {
 
@@ -282,6 +364,7 @@ void app_main(void)
                 net_sel = (net_sel + 1) % (int)s_scan.count;
                 redraw = true;
             }
+            if (accept && s_scan.count) { st_cur = ST_TARGET; redraw = true; }
             if (tap && s_scan.count) {
                 const int top = 28, rh = 34, rows = 6;
                 int first = (net_sel >= rows) ? net_sel - rows + 1 : 0;
@@ -299,7 +382,7 @@ void app_main(void)
         case ST_TARGET:
             if (redraw) { bas_ui_target(&s_scan.ap[net_sel], -1); redraw = false; }
             if (back) { st_cur = ST_PICK; redraw = true; }
-            if (tap) { label[0] = '\0'; st_cur = ST_LABEL; redraw = true; }
+            if (tap || accept) { label[0] = '\0'; st_cur = ST_LABEL; redraw = true; }
             break;
 
         case ST_LABEL: {
@@ -342,6 +425,11 @@ void app_main(void)
             if (back) { bas_engage_clear(&s_engage); st_cur = ST_PICK;
                         redraw = true; }
             if (next) { fam_sel = (fam_sel + 1) % BAS_FAM__COUNT; redraw = true; }
+            if (accept) {
+                bas_plan_default(&plan, (bas_family_t)fam_sel);
+                st_cur = ST_DETAIL;
+                redraw = true;
+            }
             if (tap) {
                 int hit = bas_ui_families_hit(tx, ty, fam_sel);
                 if (hit >= 0) {
@@ -369,11 +457,12 @@ void app_main(void)
                 redraw = false;
             }
             if (back) { st_cur = ST_FAMILIES; redraw = true; break; }
-            if (tap && gate == BAS_OK && bas_tx_supported((bas_family_t)fam_sel)) {
+            if ((tap || accept) && gate == BAS_OK &&
+                bas_tx_supported((bas_family_t)fam_sel)) {
                 plan = probe;
                 if (fs->klass == BAS_CLASS_DISRUPTIVE) {
-                    pin_entered = 0; pin_buf[0] = '\0';
-                    st_cur = ST_PIN;
+                    hold_start = 0;
+                    st_cur = ST_HOLD;
                 } else {
                     role = BAS_ROLE_OPERATOR;
                     st_cur = ST_ARM;
@@ -383,37 +472,37 @@ void app_main(void)
             break;
         }
 
-        case ST_PIN:
-            if (redraw) {
-                bas_ui_pinpad("Arming PIN", pin_entered,
-                              "shown at boot on this screen");
-                redraw = false;
-            }
-            if (back) { st_cur = ST_DETAIL; redraw = true; break; }
-            if (tap) {
-                int k = bas_ui_pinpad_hit(tx, ty);
-                if (k >= 0 && pin_entered < 4) {
-                    pin_buf[pin_entered++] = (char)('0' + k);
-                    pin_buf[pin_entered] = '\0';
-                    redraw = true;
-                } else if (k == -3 && pin_entered > 0) {
-                    pin_buf[--pin_entered] = '\0';
-                    redraw = true;
-                }
-                if (pin_entered == 4) {
-                    if (bas_ct_eq(pin_buf, s_pin, 4)) {
-                        role = BAS_ROLE_ADMIN;
-                        st_cur = ST_ARM;
-                    } else {
-                        bas_ui_message("WRONG PIN", "Not armed.", NULL,
-                                       BAS_C_STOP);
-                        vTaskDelay(pdMS_TO_TICKS(1500));
-                        pin_entered = 0; pin_buf[0] = '\0';
-                    }
+        case ST_HOLD: {
+            /* Held for HOLD_MS without releasing, or it does not arm. The
+             * progress bar is the whole affordance -- no digits to remember,
+             * no keyboard on a 240px panel. */
+            const uint32_t HOLD_MS = 1500u;
+            uint32_t t = now_ms();
+
+            if (input_held_down()) {
+                if (hold_start == 0u) { hold_start = t; }
+                uint32_t held = t - hold_start;
+                bas_ui_hold_arm((bas_family_t)fam_sel, &s_engage,
+                                (int)(held * 100u / HOLD_MS));
+                if (held >= HOLD_MS) {
+                    role = BAS_ROLE_ADMIN;   /* lasts exactly one run */
+                    st_cur = ST_ARM;
                     redraw = true;
                 }
+            } else {
+                if (hold_start != 0u) {
+                    /* Released early. Back to the detail screen rather than
+                     * silently sitting at zero. */
+                    hold_start = 0;
+                    st_cur = ST_DETAIL;
+                    redraw = true;
+                } else {
+                    bas_ui_hold_arm((bas_family_t)fam_sel, &s_engage, 0);
+                }
             }
+            if (back) { st_cur = ST_DETAIL; redraw = true; }
             break;
+        }
 
         case ST_ARM: {
             bool aborted = false;
@@ -421,7 +510,7 @@ void app_main(void)
                 bas_ui_arm((bas_family_t)fam_sel, &s_engage, left);
                 for (int i = 0; i < 10; i++) {
                     uint16_t ax, ay;
-                    if (ui_tap(&ax, &ay) || btn_minus()) { aborted = true; break; }
+                    if (ui_tap(&ax, &ay) || input_poll() != EV_NONE) { aborted = true; break; }
                     vTaskDelay(pdMS_TO_TICKS(100));
                 }
                 if (aborted) { break; }
@@ -472,7 +561,7 @@ void app_main(void)
             uint32_t left = (t < ask_until) ? ask_until - t : 0u;
             bas_ui_ask_alarm((bas_family_t)fam_sel, run_frames, left);
 
-            if (tap && run_idx >= 0) {
+            if ((tap || accept) && run_idx >= 0) {
                 bas_card_alarm(&s_card, run_idx, "operator", 0, 0,
                                BAS_SRC_OPERATOR, now_ms());
                 st_cur = ST_CARD;
@@ -487,7 +576,7 @@ void app_main(void)
 
         case ST_CARD:
             if (redraw) { bas_ui_scorecard(&s_card, now_ms()); redraw = false; }
-            if (tap || back) { st_cur = ST_FAMILIES; redraw = true; }
+            if (tap || accept || back) { st_cur = ST_FAMILIES; redraw = true; }
             break;
         }
 

@@ -6,6 +6,11 @@
 #include "basanos/target.h"
 #include "selftest.h"
 
+/* Battery pip, drawn at the top right of every header. Shows a charging mark
+ * rather than a level while the charger is attached, because a level that
+ * climbs on its own reads as a fault. */
+void bas_ui_battery(void *canvas, int x, int y);
+
 void bas_ui_splash(void);
 void bas_ui_selftest(const bas_selftest_t *r);
 void bas_ui_scanning(uint8_t channel);
