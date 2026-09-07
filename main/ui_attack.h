@@ -48,6 +48,12 @@ void bas_ui_running(bas_family_t f, const bas_engagement_t *e,
  * human and must not be compared with a wire. */
 void bas_ui_ask_alarm(bas_family_t f, uint32_t frames, uint32_t grace_left_ms);
 
+/* Shown instead of the alarm question when the radio did not actually put the
+ * frames on air. Asking "did your detector see it?" after transmitting nothing
+ * produces a MISSED that blames the detector for the transmitter's failure —
+ * the one result this instrument must never produce. */
+void bas_ui_tx_failed(bas_family_t f, const bas_tx_result_t *r);
+
 void bas_ui_scorecard(const bas_card_t *c, uint32_t now_ms);
 
 #endif /* BASANOS_UI_ATTACK_H */

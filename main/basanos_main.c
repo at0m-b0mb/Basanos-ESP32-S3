@@ -548,6 +548,25 @@ void app_main(void)
                                bas_err_str(res.stopped_by), BAS_C_STOP);
                 vTaskDelay(pdMS_TO_TICKS(2500));
                 st_cur = ST_FAMILIES;
+            } else if (res.frames_sent == 0u) {
+                /* Nothing reached the air. Discard the run rather than let it
+                 * age into a MISSED — that would blame the detector for the
+                 * transmitter's failure, which is the one result this
+                 * instrument must never produce. */
+                ESP_LOGW(TAG, "run discarded: 0 frames sent, %u rejected",
+                         (unsigned)res.tx_errors);
+                if (run_idx >= 0 && run_idx == (int)s_card.count - 1) {
+                    s_card.count--;
+                    memset(&s_card.r[run_idx], 0, sizeof(s_card.r[run_idx]));
+                    run_idx = -1;
+                }
+                bas_ui_tx_failed((bas_family_t)fam_sel, &res);
+                while (input_poll() == EV_NONE) {
+                    uint16_t ax, ay;
+                    if (ui_tap(&ax, &ay)) { break; }
+                    vTaskDelay(pdMS_TO_TICKS(40));
+                }
+                st_cur = ST_FAMILIES;
             } else {
                 ask_until = now_ms() + BAS_GRACE_DEFAULT_MS;
                 st_cur = ST_ASK;

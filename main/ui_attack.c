@@ -432,6 +432,45 @@ void bas_ui_ask_alarm(bas_family_t f, uint32_t frames, uint32_t grace_left_ms)
     bas_display_flush();
 }
 
+void bas_ui_tx_failed(bas_family_t f, const bas_tx_result_t *r)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    bas_canvas_clear(c, BAS_C_BLACK);
+    head(c, "not sent", BAS_C_STOP);
+
+    bas_text(c, 10, 32, "NOTHING WENT OUT", BAS_C_STOP, 2);
+    bas_text_clip(c, 10, 58, bas_family(f)->name, BAS_C_PAPER, 1, W - 20);
+
+    char buf[56];
+    snprintf(buf, sizeof(buf), "%u sent, %u rejected",
+             (unsigned)r->frames_sent, (unsigned)r->tx_errors);
+    bas_text(c, 10, 78, buf, BAS_C_PAPER, 1);
+
+    if (r->frames_refused > 0u) {
+        snprintf(buf, sizeof(buf), "%u refused by the gate",
+                 (unsigned)r->frames_refused);
+        bas_text(c, 10, 92, buf, BAS_C_WARN, 1);
+        bas_text_clip(c, 10, 106, bas_err_str(r->stopped_by), BAS_C_DIM, 1,
+                      W - 20);
+    } else {
+        bas_text(c, 10, 92, "The radio rejected the", BAS_C_DIM, 1);
+        bas_text(c, 10, 106, "frames.", BAS_C_DIM, 1);
+    }
+
+    bas_hline(c, 10, 126, W - 20, BAS_C_FAINT);
+
+    /* The reason this screen exists, said plainly. */
+    bas_text(c, 10, 136, "This run is NOT scored.", BAS_C_BRASS, 1);
+    bas_text(c, 10, 154, "A detector cannot miss", BAS_C_DIM, 1);
+    bas_text(c, 10, 168, "what was never sent, and", BAS_C_DIM, 1);
+    bas_text(c, 10, 182, "recording a MISSED here", BAS_C_DIM, 1);
+    bas_text(c, 10, 196, "would blame the wrong", BAS_C_DIM, 1);
+    bas_text(c, 10, 210, "half of the test.", BAS_C_DIM, 1);
+
+    footer(c, "LEFT to continue", BAS_C_BRASS);
+    bas_display_flush();
+}
+
 void bas_ui_scorecard(const bas_card_t *card, uint32_t now_ms)
 {
     bas_canvas_t *c = bas_display_canvas();
