@@ -22,16 +22,24 @@ SRC := $(ENGINE)/basanos.c \
        $(ENGINE)/target.c \
        $(ENGINE)/engage.c \
        $(ENGINE)/family.c \
+       $(ENGINE)/station.c \
+       $(ENGINE)/ie.c \
+       $(ENGINE)/survey.c \
        $(RBAC)/sha256.c \
        $(RBAC)/rbac.c \
-       $(SCORE)/score.c
+       $(SCORE)/score.c \
+       $(SCORE)/alarm.c
 
 TESTS := main.c \
          test_target.c \
          test_engage.c \
          test_family.c \
          test_rbac.c \
-         test_score.c
+         test_score.c \
+         test_station.c \
+         test_ie.c \
+         test_survey.c \
+         test_alarm.c
 
 BIN := basanos_tests
 

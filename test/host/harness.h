@@ -44,5 +44,9 @@ void suite_engage(void);
 void suite_family(void);
 void suite_rbac(void);
 void suite_score(void);
+void suite_station(void);
+void suite_ie(void);
+void suite_survey(void);
+void suite_alarm(void);
 
 #endif

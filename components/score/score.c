@@ -70,9 +70,22 @@ bas_err_t bas_card_end(bas_card_t *c, int idx, uint32_t now_ms, uint32_t frames_
     return BAS_OK;
 }
 
+bas_err_t bas_card_alarm_from(bas_card_t *c, int idx,
+                              const bas_alarm_t *a, uint32_t now_ms)
+{
+    if (a == NULL || !a->valid) {
+        /* A line that failed to parse is not evidence of anything. Crediting
+         * it would manufacture a detector that works out of a typo. */
+        return BAS_ERR_ARG;
+    }
+    return bas_card_alarm(c, idx, a->detector, a->confidence,
+                          a->families, a->source, now_ms);
+}
+
 bas_err_t bas_card_alarm(bas_card_t *c, int idx,
                          const char *detector, uint8_t confidence,
-                         uint8_t families_fired, uint32_t now_ms)
+                         uint8_t families_fired, bas_alarm_src_t src,
+                         uint32_t now_ms)
 {
     bas_run_t *r = run_at(c, idx);
     if (r == NULL) {
@@ -103,6 +116,7 @@ bas_err_t bas_card_alarm(bas_card_t *c, int idx,
     r->alarm_ms         = now_ms;
     r->alarm_confidence = (confidence > 100u) ? 100u : confidence;
     r->families_fired   = families_fired;
+    r->alarm_source     = src;
     (void)bas_strlcpy(r->alarm_detector, detector, sizeof(r->alarm_detector));
     return BAS_OK;
 }
@@ -194,11 +208,15 @@ void bas_run_line(const bas_run_t *r, uint32_t now_ms, char *out, size_t out_sz)
     int32_t lat = bas_run_latency_ms(r);
 
     if (lat >= 0) {
-        snprintf(out, out_sz, "%s  %s  %d.%01ds  %s  conf %u",
+        /* The source is on the line because an operator's thumb and a UART are
+         * not the same measurement, and a reader comparing two latencies needs
+         * to see which is which without going back to the raw log. */
+        snprintf(out, out_sz, "%s  %s  %d.%01ds  %s  conf %u  via %s",
                  fam, bas_verdict_name(v),
                  (int)(lat / 1000), (int)((lat % 1000) / 100),
                  r->alarm_detector[0] ? r->alarm_detector : "-",
-                 (unsigned)r->alarm_confidence);
+                 (unsigned)r->alarm_confidence,
+                 bas_alarm_src_name(r->alarm_source));
     } else {
         snprintf(out, out_sz, "%s  %s  -  -", fam, bas_verdict_name(v));
     }

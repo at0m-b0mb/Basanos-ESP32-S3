@@ -143,17 +143,51 @@ evidence about a detector in general, and an A+ would imply that it was.
 
 ---
 
+## Knowing whether it worked
+
+Emitting a signal is half a test. The other half is observing the response, and
+a detector under test can report in three ways — an operator watching it and
+tapping the screen, a line on the UART pads, or a post over Wi-Fi:
+
+```
+BASANOS-ALARM detector=Aegis conf=82 fam=0x0F
+```
+
+The source travels with the alarm into the report, because 300 ms from a wire
+and 300 ms from a human thumb are not the same measurement and must never be
+averaged together.
+
+## Passive capability
+
+None of this transmits. It exists so a run happens against a known baseline
+rather than into noise.
+
+- **Network survey** with real security posture parsed from the beacon —
+  including WPA2/WPA3 transition mode reported as transition mode, because
+  calling it WPA3 would overstate the target's resistance to the exact family
+  this device emits.
+- **Station enumeration**, so an engagement can narrow to one client. A
+  randomised MAC is flagged rather than hidden: it may not be the same device
+  it was ten minutes ago, and an operator narrowing to it should know.
+- **Management-frame protection detection**, so the UI can say a deauth run is
+  expected to bounce before the operator spends one.
+- **Channel analyser** that will report "do not know" rather than nominate a
+  channel nobody listened to. Unmeasured is not the same as quiet.
+- **Frame counters**, so "the detector was busy" becomes a number in the report
+  instead of an excuse afterwards.
+
 ## Architecture
 
 Judgement never touches hardware. Everything in `components/` is plain C11 with
 no ESP-IDF dependency, so it runs on the host:
 
 ```
-components/engine/   target selection, engagement lock, families, ceilings
+components/engine/   target + station selection, engagement lock, families,
+                     ceilings, 802.11 element parsing, passive survey
 components/rbac/     roles, SHA-256/HMAC/PBKDF2, user table, lockout
-components/score/    the scorecard
+components/score/    the scorecard and alarm ingest
 main/                ESP-IDF glue (display, radio, UI) — thin, replaceable
-test/host/           393 checks, no hardware required
+test/host/           587 checks, no hardware required
 ```
 
 ```bash
@@ -188,7 +222,7 @@ documentation. Two things worth knowing before you plan hardware:
 
 | Layer | State |
 |---|---|
-| Engine, RBAC, scorecard | ✅ 393 host checks, ASan + UBSan clean |
+| Engine, RBAC, scorecard | ✅ 587 host checks, ASan + UBSan clean |
 | ESP-IDF glue, radio, UI | 🧱 not yet written |
 | Hardware bring-up | 🧱 not started |
 

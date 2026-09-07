@@ -25,7 +25,7 @@ void suite_score(void)
 
     SUITE("score: an alarm during emission is CAUGHT");
 
-    CHECK_EQ(bas_card_alarm(&c, 0, "Aegis", 82, 0x0F, 2400), BAS_OK);
+    CHECK_EQ(bas_card_alarm(&c, 0, "Aegis", 82, 0x0F, BAS_SRC_SERIAL, 2400), BAS_OK);
     CHECK_EQ(bas_run_verdict(&c.r[0], 2400), BAS_VERDICT_CAUGHT);
     CHECK_EQ(bas_run_latency_ms(&c.r[0]), 1400);
     CHECK_STR(c.r[0].alarm_detector, "Aegis");
@@ -34,7 +34,7 @@ void suite_score(void)
 
     /* The first alarm wins: a detector that keeps shouting earns no better
      * latency, and the moment it first spoke is not overwritten. */
-    CHECK_EQ(bas_card_alarm(&c, 0, "Aegis", 99, 0x0F, 2900), BAS_OK);
+    CHECK_EQ(bas_card_alarm(&c, 0, "Aegis", 99, 0x0F, BAS_SRC_SERIAL, 2900), BAS_OK);
     CHECK_EQ(bas_run_latency_ms(&c.r[0]), 1400);
     CHECK_EQ(c.r[0].alarm_confidence, 82);
 
@@ -60,7 +60,7 @@ void suite_score(void)
     bas_card_reset(&c);
     r = bas_card_begin(&c, BAS_FAM_DEAUTH, 1000, 3000);
     CHECK_EQ(bas_card_end(&c, r, 5000, 100), BAS_OK);
-    CHECK_EQ(bas_card_alarm(&c, r, "Pharos", 71, 0x03, 6200), BAS_OK);
+    CHECK_EQ(bas_card_alarm(&c, r, "Pharos", 71, 0x03, BAS_SRC_SERIAL, 6200), BAS_OK);
     CHECK_EQ(bas_run_verdict(&c.r[r], 6200), BAS_VERDICT_LATE);
     CHECK_EQ(bas_run_verdict(&c.r[r], 20000), BAS_VERDICT_LATE);
     CHECK_EQ(bas_run_latency_ms(&c.r[r]), 5200);
@@ -72,12 +72,12 @@ void suite_score(void)
     CHECK_EQ(bas_card_end(&c, r, 5000, 100), BAS_OK);
     /* 8001 is past end+grace. Crediting it here would invent a working
      * detector out of an alarm that belonged to the next run. */
-    CHECK_EQ(bas_card_alarm(&c, r, "Aegis", 90, 0x01, 8001), BAS_ERR_ARG);
+    CHECK_EQ(bas_card_alarm(&c, r, "Aegis", 90, 0x01, BAS_SRC_SERIAL, 8001), BAS_ERR_ARG);
     CHECK(!c.r[r].alarm_seen);
     CHECK_EQ(bas_run_verdict(&c.r[r], 9000), BAS_VERDICT_MISSED);
 
     /* An alarm before the run started is equally not ours. */
-    CHECK_EQ(bas_card_alarm(&c, r, "Aegis", 90, 0x01, 500), BAS_ERR_ARG);
+    CHECK_EQ(bas_card_alarm(&c, r, "Aegis", 90, 0x01, BAS_SRC_SERIAL, 500), BAS_ERR_ARG);
 
     SUITE("score: boundaries of the grace window");
 
@@ -85,33 +85,33 @@ void suite_score(void)
     r = bas_card_begin(&c, BAS_FAM_DEAUTH, 1000, 3000);
     bas_card_end(&c, r, 5000, 10);
     /* Exactly on the deadline still counts. */
-    CHECK_EQ(bas_card_alarm(&c, r, "Argus", 60, 0x01, 8000), BAS_OK);
+    CHECK_EQ(bas_card_alarm(&c, r, "Argus", 60, 0x01, BAS_SRC_SERIAL, 8000), BAS_OK);
     CHECK_EQ(bas_run_verdict(&c.r[r], 8000), BAS_VERDICT_LATE);
 
     /* An alarm exactly at the end of emission is a catch, not a late. */
     bas_card_reset(&c);
     r = bas_card_begin(&c, BAS_FAM_DEAUTH, 1000, 3000);
     bas_card_end(&c, r, 5000, 10);
-    CHECK_EQ(bas_card_alarm(&c, r, "Argus", 60, 0x01, 5000), BAS_OK);
+    CHECK_EQ(bas_card_alarm(&c, r, "Argus", 60, 0x01, BAS_SRC_SERIAL, 5000), BAS_OK);
     CHECK_EQ(bas_run_verdict(&c.r[r], 6000), BAS_VERDICT_CAUGHT);
 
     SUITE("score: confidence is clamped to 100");
 
     bas_card_reset(&c);
     r = bas_card_begin(&c, BAS_FAM_DEAUTH, 1000, 3000);
-    bas_card_alarm(&c, r, "X", 250, 0, 1500);
+    bas_card_alarm(&c, r, "X", 250, 0, BAS_SRC_SERIAL, 1500);
     CHECK_EQ(c.r[r].alarm_confidence, 100);
 
     SUITE("score: tally across a session");
 
     bas_card_reset(&c);
     int a = bas_card_begin(&c, BAS_FAM_DEAUTH, 1000, 3000);
-    bas_card_alarm(&c, a, "Aegis", 80, 0x0F, 2000);      /* caught, 1000ms  */
+    bas_card_alarm(&c, a, "Aegis", 80, 0x0F, BAS_SRC_SERIAL, 2000);      /* caught, 1000ms  */
     bas_card_end(&c, a, 4000, 40);
 
     int b = bas_card_begin(&c, BAS_FAM_BEACON, 5000, 3000);
     bas_card_end(&c, b, 7000, 40);
-    bas_card_alarm(&c, b, "Aegis", 55, 0x01, 8500);      /* late, 3500ms    */
+    bas_card_alarm(&c, b, "Aegis", 55, 0x01, BAS_SRC_SERIAL, 8500);      /* late, 3500ms    */
 
     int d = bas_card_begin(&c, BAS_FAM_PROBE_REQ, 9000, 3000);
     bas_card_end(&c, d, 10000, 40);                       /* missed          */
@@ -149,7 +149,7 @@ void suite_score(void)
 
     CHECK_EQ(bas_card_end(&c, 99, 1000, 0), BAS_ERR_NO_RUN);
     CHECK_EQ(bas_card_end(&c, -1, 1000, 0), BAS_ERR_NO_RUN);
-    CHECK_EQ(bas_card_alarm(&c, 99, "X", 10, 0, 1000), BAS_ERR_NO_RUN);
+    CHECK_EQ(bas_card_alarm(&c, 99, "X", 10, 0, BAS_SRC_SERIAL, 1000), BAS_ERR_NO_RUN);
     CHECK_EQ(bas_card_begin(&c, (bas_family_t)999, 1000, 3000), -1);
 
     bas_card_reset(&c);

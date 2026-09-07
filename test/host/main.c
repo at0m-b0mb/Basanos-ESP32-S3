@@ -14,6 +14,10 @@ int main(void)
     suite_family();
     suite_rbac();
     suite_score();
+    suite_station();
+    suite_ie();
+    suite_survey();
+    suite_alarm();
 
     printf("\n%d checks, %d failures\n", g_checks, g_fails);
     if (g_fails != 0) {

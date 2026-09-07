@@ -16,6 +16,7 @@
 #ifndef BASANOS_SCORE_H
 #define BASANOS_SCORE_H
 
+#include "basanos/alarm.h"
 #include "basanos/family.h"
 
 #ifdef __cplusplus
@@ -47,11 +48,12 @@ typedef struct {
     uint32_t     grace_ms;
     uint32_t     frames_sent;
 
-    bool         alarm_seen;
-    uint32_t     alarm_ms;
-    uint8_t      alarm_confidence; /* 0..100 as the detector reported it     */
-    char         alarm_detector[BAS_DETECTOR_NAME_MAX];
-    uint8_t      families_fired;   /* bitmask, for 4-family detectors        */
+    bool            alarm_seen;
+    uint32_t        alarm_ms;
+    uint8_t         alarm_confidence; /* 0..100 as the detector reported it  */
+    char            alarm_detector[BAS_DETECTOR_NAME_MAX];
+    uint8_t         families_fired;   /* bitmask, for 4-family detectors     */
+    bas_alarm_src_t alarm_source;     /* how the instrument learned of it    */
 } bas_run_t;
 
 #define BAS_MAX_RUNS 32
@@ -76,7 +78,14 @@ bas_err_t bas_card_end(bas_card_t *c, int idx, uint32_t now_ms, uint32_t frames_
  * so an alarm belonging to a previous run cannot be credited to this one. */
 bas_err_t bas_card_alarm(bas_card_t *c, int idx,
                          const char *detector, uint8_t confidence,
-                         uint8_t families_fired, uint32_t now_ms);
+                         uint8_t families_fired, bas_alarm_src_t src,
+                         uint32_t now_ms);
+
+/* Convenience for the serial and network paths: take a parsed alarm line and
+ * credit it to a run. Refuses an alarm that did not parse, so a malformed line
+ * from a detector never becomes a phantom catch. */
+bas_err_t bas_card_alarm_from(bas_card_t *c, int idx,
+                              const bas_alarm_t *a, uint32_t now_ms);
 
 bas_verdict_t bas_run_verdict(const bas_run_t *r, uint32_t now_ms);
 
