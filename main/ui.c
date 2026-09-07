@@ -1,14 +1,21 @@
-/* Basanos — screens.
+/* Basanos — the screen set.
  *
- * House style, dark variant: true black ground, warm paper text, one deep
- * brass that stays readable at caption size and a bright shine used only on
- * marks that carry no words. No decoration that is not carrying information.
+ * Warm paper, gold accent, one severity colour set kept separate from the
+ * accent. Restraint over decoration: a border, a fill or a stripe is spent
+ * where it means something, not stamped on every block.
+ *
+ * One rule specific to this device: any screen that can result in a frame
+ * going out states what will be emitted, at whom, and for how long, in words,
+ * before anything can be committed.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "ui.h"
+
+#include "console.h"
 #include "display.h"
 #include "power.h"
+#include "theme.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -16,60 +23,162 @@
 #define W 240
 #define H 240
 
+/* --- chrome --------------------------------------------------------------- */
+
 void bas_ui_battery(void *canvas, int x, int y)
 {
     bas_canvas_t *c = (bas_canvas_t *)canvas;
     uint8_t pct = bas_power_level();
 
-    bas_rect(c, x, y, 18, 9, BAS_C_DIM);
-    bas_fill(c, x + 18, y + 3, 2, 3, BAS_C_DIM);
+    bas_rect(c, x, y, 18, 9, TH_INK3);
+    bas_fill(c, x + 18, y + 3, 2, 3, TH_INK3);
 
     if (bas_power_charging()) {
-        /* A bolt, not a level: a bar that climbs by itself looks like a
-         * misreading rather than a charger. */
-        bas_fill(c, x + 8, y + 2, 2, 3, BAS_C_SHINE);
-        bas_fill(c, x + 6, y + 4, 6, 1, BAS_C_SHINE);
-        bas_fill(c, x + 8, y + 5, 2, 3, BAS_C_SHINE);
+        /* A bolt, not a level. A bar that climbs by itself reads as a
+         * misreading rather than as a charger. */
+        bas_fill(c, x + 8, y + 2, 2, 3, TH_BRASS);
+        bas_fill(c, x + 6, y + 4, 6, 1, TH_BRASS);
+        bas_fill(c, x + 8, y + 5, 2, 3, TH_BRASS);
         return;
     }
     if (pct == 0u) {
-        return;                      /* no gauge — draw the shell only */
+        return;
     }
-    uint16_t col = pct <= 20u ? BAS_C_STOP : (pct <= 40u ? BAS_C_WARN
-                                                         : BAS_C_PAPER);
+    uint16_t col = pct <= 20u ? TH_STOP : (pct <= 40u ? TH_WARN : TH_INK2);
     bas_fill(c, x + 2, y + 2, (14 * pct) / 100, 5, col);
 }
 
-static void header(bas_canvas_t *c, const char *label)
+static void head(bas_canvas_t *c, const char *title, const char *right)
 {
-    bas_fill(c, 0, 0, W, 22, BAS_C_SURFACE);
-    bas_text(c, 8, 8, "BASANOS", BAS_C_BRASS, 1);
-    bas_ui_battery(c, W - 28, 7);
-    if (label != NULL) {
-        int w = bas_text_width(label, 1);
-        bas_text(c, W - 36 - w, 8, label, BAS_C_DIM, 1);
+    bas_fill(c, 0, 0, W, TH_HEAD_H, TH_CARD);
+    bas_text(c, TH_PAD, 9, title != NULL ? title : "BASANOS", TH_INK, 1);
+
+    /* Remote control is never covert. Once a command has arrived this stays
+     * for the rest of the session and there is no way to switch it off. */
+    int rx = W - TH_PAD - 22;
+    bas_ui_battery(c, rx, 8);
+
+    if (bas_console_active()) {
+        const char *r = "REMOTE";
+        rx -= bas_text_width(r, 1) + 8;
+        bas_text(c, rx, 9, r, TH_STOP, 1);
     }
-    bas_hline(c, 0, 22, W, BAS_C_FAINT);
+    if (right != NULL) {
+        rx -= bas_text_width(right, 1) + 8;
+        bas_text(c, rx, 9, right, TH_INK3, 1);
+    }
+    bas_hline(c, 0, TH_HEAD_H, W, TH_RULE2);
 }
+
+static void foot(bas_canvas_t *c, const char *s)
+{
+    if (s == NULL) {
+        return;
+    }
+    bas_hline(c, 0, H - TH_FOOT_H, W, TH_RULE);
+    bas_text(c, TH_PAD, H - TH_FOOT_H + 5, s, TH_INK3, 1);
+}
+
+static void page(bas_canvas_t *c, const char *title, const char *right)
+{
+    bas_canvas_clear(c, TH_PAPER);
+    head(c, title, right);
+}
+
+/* --- generic list --------------------------------------------------------- */
+
+#define LIST_TOP  (TH_HEAD_H + 4)
+#define LIST_ROWS 5
+
+void bas_ui_list(const char *title, const char *right,
+                 const bas_row_t *rows, int n, int sel,
+                 const char *footer)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, title, right);
+
+    if (n <= 0) {
+        bas_text(c, TH_PAD, 100, "Nothing here", TH_INK3, 1);
+        foot(c, footer);
+        bas_display_flush();
+        return;
+    }
+
+    int first = (sel >= LIST_ROWS) ? sel - LIST_ROWS + 1 : 0;
+
+    for (int i = 0; i < LIST_ROWS; i++) {
+        int idx = first + i;
+        if (idx >= n) {
+            break;
+        }
+        const bas_row_t *r = &rows[idx];
+        int y = LIST_TOP + i * TH_ROW_H;
+        bool on = (idx == sel);
+
+        /* Selection is a wash plus a gold edge. Unselected rows carry no fill
+         * at all, so the eye lands on one thing. */
+        if (on) {
+            bas_fill(c, 0, y, W, TH_ROW_H - 2, TH_WASH);
+            bas_fill(c, 0, y, 3, TH_ROW_H - 2, TH_SHINE);
+        }
+        if (r->stripe != 0u) {
+            bas_fill(c, on ? 3 : 0, y, 3, TH_ROW_H - 2, r->stripe);
+        }
+
+        uint16_t tc = r->enabled ? (on ? TH_INK : TH_INK2) : TH_INK3;
+        uint16_t sc = r->enabled ? TH_INK3 : TH_RULE2;
+
+        bas_text_clip(c, TH_PAD + 4, y + 5, r->title, tc, 1, W - 2 * TH_PAD - 8);
+        if (r->sub != NULL) {
+            bas_text_clip(c, TH_PAD + 4, y + 18, r->sub, sc, 1,
+                          W - 2 * TH_PAD - 8);
+        }
+        if (idx < n - 1) {
+            bas_hline(c, TH_PAD, y + TH_ROW_H - 2, W - 2 * TH_PAD, TH_RULE);
+        }
+    }
+
+    /* A scroll hint only when there is more than fits — no ornament that
+     * carries no information. */
+    if (n > LIST_ROWS) {
+        int track = LIST_ROWS * TH_ROW_H;
+        int knob  = track * LIST_ROWS / n;
+        if (knob < 8) { knob = 8; }
+        int pos = (n > 1) ? (track - knob) * sel / (n - 1) : 0;
+        bas_fill(c, W - 3, LIST_TOP + pos, 2, knob, TH_RULE2);
+    }
+
+    foot(c, footer);
+    bas_display_flush();
+}
+
+int bas_ui_list_hit(uint16_t x, uint16_t y, int sel, int n)
+{
+    if ((int)y < LIST_TOP || (int)y >= LIST_TOP + LIST_ROWS * TH_ROW_H) {
+        return -1;
+    }
+    int first = (sel >= LIST_ROWS) ? sel - LIST_ROWS + 1 : 0;
+    int hit = first + ((int)y - LIST_TOP) / TH_ROW_H;
+    return (hit >= 0 && hit < n) ? hit : -1;
+}
+
+/* --- splash and self test ------------------------------------------------- */
 
 void bas_ui_splash(void)
 {
     bas_canvas_t *c = bas_display_canvas();
-    bas_canvas_clear(c, BAS_C_BLACK);
+    bas_canvas_clear(c, TH_PAPER);
 
     const char *t = "BASANOS";
     int tw = bas_text_width(t, 4);
-    bas_text(c, (W - tw) / 2, 86, t, BAS_C_PAPER, 4);
+    bas_text(c, (W - tw) / 2, 84, t, TH_INK, 4);
+    bas_hline(c, (W - tw) / 2, 120, tw, TH_SHINE);
 
-    /* The rule under the wordmark is the only ornament on this screen, and it
-     * is the brand mark rather than decoration. */
-    bas_hline(c, (W - tw) / 2, 122, tw, BAS_C_SHINE);
+    const char *s = "wireless assessment instrument";
+    bas_text(c, (W - bas_text_width(s, 1)) / 2, 132, s, TH_INK3, 1);
 
-    const char *s = "detector proving ground";
-    bas_text(c, (W - bas_text_width(s, 1)) / 2, 134, s, BAS_C_DIM, 1);
-
-    const char *w = "authorised testing only";
-    bas_text(c, (W - bas_text_width(w, 1)) / 2, 214, w, BAS_C_BRASS, 1);
+    const char *w = "AUTHORISED TESTING ONLY";
+    bas_text(c, (W - bas_text_width(w, 1)) / 2, 210, w, TH_BRASS, 1);
 
     bas_display_flush();
 }
@@ -77,140 +186,616 @@ void bas_ui_splash(void)
 void bas_ui_selftest(const bas_selftest_t *r)
 {
     bas_canvas_t *c = bas_display_canvas();
-    bas_canvas_clear(c, BAS_C_BLACK);
-    header(c, "self test");
+    page(c, "Self test", NULL);
 
     bool ok = bas_selftest_ok(r);
-    uint16_t accent = ok ? BAS_C_OK : BAS_C_STOP;
-
     char buf[48];
+
     snprintf(buf, sizeof(buf), "%d", r->checks);
-    bas_text(c, 16, 52, buf, BAS_C_PAPER, 4);
-    bas_text(c, 16, 88, "checks on this silicon", BAS_C_DIM, 1);
+    bas_text(c, TH_PAD, 46, buf, TH_INK, 4);
+    bas_text(c, TH_PAD, 84, "safety checks on this silicon", TH_INK3, 1);
 
-    bas_fill(c, 16, 112, W - 32, 2, BAS_C_FAINT);
-
-    bas_text(c, 16, 128, ok ? "ALL PASSED" : "FAILED", accent, 2);
+    bas_hline(c, TH_PAD, 104, W - 2 * TH_PAD, TH_RULE);
 
     if (ok) {
-        bas_text(c, 16, 156, "Safety invariants hold.", BAS_C_DIM, 1);
-        bas_text(c, 16, 170, "Broadcast unreachable,", BAS_C_DIM, 1);
-        bas_text(c, 16, 184, "admin needs a target.", BAS_C_DIM, 1);
+        bas_text(c, TH_PAD, 118, "ALL PASSED", TH_OK, 2);
+        bas_text(c, TH_PAD, 146, "Broadcast targets are", TH_INK2, 1);
+        bas_text(c, TH_PAD, 160, "unreachable and no role", TH_INK2, 1);
+        bas_text(c, TH_PAD, 174, "transmits without a", TH_INK2, 1);
+        bas_text(c, TH_PAD, 188, "locked engagement.", TH_INK2, 1);
     } else {
-        snprintf(buf, sizeof(buf), "%d failed", r->failures);
-        bas_text(c, 16, 156, buf, BAS_C_STOP, 1);
-        bas_text_clip(c, 16, 174, r->first_failure, BAS_C_PAPER, 1, W - 32);
-        bas_text(c, 16, 200, "Device will not arm.", BAS_C_STOP, 1);
+        bas_text(c, TH_PAD, 118, "FAILED", TH_STOP, 2);
+        snprintf(buf, sizeof(buf), "%d of %d failed", r->failures, r->checks);
+        bas_text(c, TH_PAD, 146, buf, TH_STOP, 1);
+        bas_text_clip(c, TH_PAD, 164, r->first_failure, TH_INK, 1,
+                      W - 2 * TH_PAD);
+        bas_text(c, TH_PAD, 192, "This device will not arm.", TH_STOP, 1);
     }
-
     bas_display_flush();
 }
 
-void bas_ui_scanning(uint8_t channel)
+void bas_ui_scanning(uint8_t channel, int found)
 {
     bas_canvas_t *c = bas_display_canvas();
-    bas_canvas_clear(c, BAS_C_BLACK);
-    header(c, "passive");
+    page(c, "Survey", "passive");
 
-    bas_text(c, 16, 60, "Surveying", BAS_C_PAPER, 3);
+    bas_text(c, TH_PAD, 48, "Listening", TH_INK, 3);
 
-    char buf[32];
-    snprintf(buf, sizeof(buf), "channel %u", (unsigned)channel);
-    bas_text(c, 16, 96, buf, BAS_C_DIM, 1);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "channel %u of 13", (unsigned)channel);
+    bas_text(c, TH_PAD, 84, buf, TH_INK3, 1);
 
-    /* A channel strip that fills as the survey walks the band — the only
-     * moving thing on the screen, and it is real progress, not a spinner. */
+    /* Real progress across the band, not a spinner. */
     for (uint8_t ch = 1; ch <= 13; ch++) {
-        int x = 16 + (ch - 1) * 16;
+        int x = TH_PAD + (ch - 1) * 17;
         bool done = ch <= channel;
-        bas_fill(c, x, 130, 12, 28, done ? BAS_C_BRASS : BAS_C_SURFACE);
+        bas_fill(c, x, 110, 13, 30, done ? TH_BRASS : TH_SUNK);
+        if (!done) {
+            bas_rect(c, x, 110, 13, 30, TH_RULE);
+        }
     }
 
-    bas_text(c, 16, 176, "Receive only. Nothing", BAS_C_DIM, 1);
-    bas_text(c, 16, 190, "is transmitted here.", BAS_C_DIM, 1);
+    snprintf(buf, sizeof(buf), "%d networks so far", found);
+    bas_text(c, TH_PAD, 156, buf, TH_INK2, 1);
+
+    bas_text(c, TH_PAD, 186, "Receive only. Nothing is", TH_INK3, 1);
+    bas_text(c, TH_PAD, 200, "transmitted during a survey.", TH_INK3, 1);
 
     bas_display_flush();
 }
 
-void bas_ui_picker(const bas_scan_t *s, int sel)
+/* --- home ----------------------------------------------------------------- */
+
+#define TILE_X0 TH_PAD
+#define TILE_Y0 92
+#define TILE_W  105
+#define TILE_H  60
+#define TILE_GX 10
+#define TILE_GY 10
+
+static void tile(bas_canvas_t *c, int col, int row, const char *name,
+                 const char *value, bool on, bool ready)
+{
+    int x = TILE_X0 + col * (TILE_W + TILE_GX);
+    int y = TILE_Y0 + row * (TILE_H + TILE_GY);
+
+    bas_fill(c, x, y, TILE_W, TILE_H, on ? TH_WASH : TH_CARD);
+    bas_rect(c, x, y, TILE_W, TILE_H, on ? TH_BRASS : TH_RULE);
+    if (on) {
+        bas_fill(c, x, y, 3, TILE_H, TH_SHINE);
+    }
+
+    bas_text(c, x + 10, y + 10, name, ready ? TH_INK : TH_INK3, 1);
+    /* The figure is the point of the tile, so it carries the weight. */
+    bas_text_clip(c, x + 10, y + 28, value, ready ? TH_INK : TH_RULE2, 2,
+                  TILE_W - 20);
+}
+
+void bas_ui_home(const bas_engagement_t *e, const bas_scan_t *s,
+                 const bas_card_t *card, int sel)
 {
     bas_canvas_t *c = bas_display_canvas();
-    bas_canvas_clear(c, BAS_C_BLACK);
+    page(c, "BASANOS", NULL);
 
-    char buf[48];
-    snprintf(buf, sizeof(buf), "%u found", (unsigned)s->count);
-    header(c, buf);
+    char buf[64];
 
-    if (s->count == 0u) {
-        bas_text(c, 16, 100, "No networks in range", BAS_C_DIM, 1);
-        bas_display_flush();
-        return;
+    /* The engagement strip. It is the first thing on the page because nothing
+     * below it can transmit without one. */
+    bool locked = (e != NULL && e->locked);
+    bas_fill(c, 0, TH_HEAD_H + 1, W, 40, locked ? TH_WASH : TH_SUNK);
+    bas_hline(c, 0, TH_HEAD_H + 41, W, TH_RULE);
+
+    if (locked) {
+        bas_fill(c, 0, TH_HEAD_H + 1, 3, 40, TH_SHINE);
+        bas_text_clip(c, TH_PAD, TH_HEAD_H + 7,
+                      e->target.hidden ? "(hidden network)" : e->target.ssid,
+                      TH_INK, 1, W - 2 * TH_PAD);
+        snprintf(buf, sizeof(buf), "ch %u  %s  %s",
+                 (unsigned)e->target.channel, bas_sec_name(e->target.sec),
+                 e->label);
+        bas_text_clip(c, TH_PAD, TH_HEAD_H + 22, buf, TH_INK3, 1,
+                      W - 2 * TH_PAD);
+    } else {
+        bas_text(c, TH_PAD, TH_HEAD_H + 7, "No target locked", TH_INK2, 1);
+        bas_text(c, TH_PAD, TH_HEAD_H + 22, "Wi-Fi, then pick a network",
+                 TH_INK3, 1);
     }
 
-    const int row_h = 34;
-    const int top   = 28;
-    const int rows  = (H - top - 18) / row_h;    /* 6 rows */
+    bas_tally_t t;
+    bas_card_tally(card, 0, &t);
 
-    int first = 0;
-    if (sel >= rows) {
-        first = sel - rows + 1;
-    }
+    snprintf(buf, sizeof(buf), "%u", (unsigned)(s ? s->count : 0));
+    tile(c, 0, 0, "WI-FI", buf, sel == BAS_HOME_WIFI, true);
 
-    for (int i = 0; i < rows; i++) {
-        int idx = first + i;
-        if (idx >= (int)s->count) {
-            break;
-        }
-        const bas_ap_t *ap = &s->ap[idx];
-        int y = top + i * row_h;
-        bool on = (idx == sel);
+    tile(c, 1, 0, "BLUETOOTH", "--", sel == BAS_HOME_BLE, false);
 
-        if (on) {
-            bas_fill(c, 0, y, W, row_h - 2, BAS_C_SURFACE);
-            bas_fill(c, 0, y, 3, row_h - 2, BAS_C_SHINE);
-        }
+    tile(c, 0, 1, "RECON", locked ? "ready" : "scan", sel == BAS_HOME_RECON,
+         true);
 
-        const char *name = ap->hidden ? "(hidden)" : ap->ssid;
-        bas_text_clip(c, 10, y + 4, name,
-                      on ? BAS_C_PAPER : BAS_C_DIM, 1, W - 60);
+    snprintf(buf, sizeof(buf), "%d/%d", t.caught, (int)card->count);
+    tile(c, 1, 1, "RESULTS", buf, sel == BAS_HOME_RESULTS, card->count > 0);
 
-        /* Signal as a number, right-aligned. Tabular by construction because
-         * the font is fixed width. */
-        snprintf(buf, sizeof(buf), "%d", (int)ap->rssi);
-        bas_text(c, W - 10 - bas_text_width(buf, 1), y + 4, buf,
-                 on ? BAS_C_PAPER : BAS_C_DIM, 1);
+    foot(c, "RIGHT move   LEFT open");
+    bas_display_flush();
+}
 
-        snprintf(buf, sizeof(buf), "ch%-3u %s", (unsigned)ap->channel,
-                 bas_sec_name(ap->sec));
-        bas_text(c, 10, y + 16, buf, BAS_C_DIM, 1);
-
-        /* WPA3 and enterprise are expected to shrug off a deauth. Saying so
-         * here saves the operator spending a run to find out. */
-        if (bas_sec_likely_mfp(ap->sec)) {
-            const char *m = "MFP";
-            bas_text(c, W - 10 - bas_text_width(m, 1), y + 16, m, BAS_C_BRASS, 1);
+int bas_ui_home_hit(uint16_t x, uint16_t y)
+{
+    for (int i = 0; i < BAS_HOME__COUNT; i++) {
+        int col = i % 2, row = i / 2;
+        int tx = TILE_X0 + col * (TILE_W + TILE_GX);
+        int ty = TILE_Y0 + row * (TILE_H + TILE_GY);
+        if ((int)x >= tx && (int)x < tx + TILE_W &&
+            (int)y >= ty && (int)y < ty + TILE_H) {
+            return i;
         }
     }
+    return -1;
+}
 
-    bas_hline(c, 0, H - 16, W, BAS_C_FAINT);
-    bas_text(c, 8, H - 12, "RIGHT next   LEFT open", BAS_C_DIM, 1);
+/* --- networks and target -------------------------------------------------- */
+
+void bas_ui_networks(const bas_scan_t *s, int sel)
+{
+    static bas_row_t rows[BAS_MAX_APS];
+    static char subs[BAS_MAX_APS][40];
+
+    for (uint8_t i = 0; i < s->count; i++) {
+        const bas_ap_t *ap = &s->ap[i];
+        snprintf(subs[i], sizeof(subs[i]), "ch%-3u %4d dBm  %s%s",
+                 (unsigned)ap->channel, (int)ap->rssi, bas_sec_name(ap->sec),
+                 bas_sec_likely_mfp(ap->sec) ? "  protected" : "");
+        rows[i].title   = ap->hidden ? "(hidden network)" : ap->ssid;
+        rows[i].sub     = subs[i];
+        /* Protected networks are expected to shrug off a deauth. Marking them
+         * here saves the operator spending a run to find that out. */
+        rows[i].stripe  = bas_sec_likely_mfp(ap->sec) ? TH_BRASS : 0u;
+        rows[i].enabled = true;
+    }
+
+    char right[24];
+    snprintf(right, sizeof(right), "%u found", (unsigned)s->count);
+    bas_ui_list("Networks", right, rows, s->count, sel,
+                "LEFT select   hold LEFT back");
+}
+
+void bas_ui_target(const bas_ap_t *ap, int station_count)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "Target", NULL);
+
+    char buf[64], mac[18];
+
+    bas_text_clip(c, TH_PAD, 34, ap->hidden ? "(hidden network)" : ap->ssid,
+                  TH_INK, 2, W - 2 * TH_PAD);
+
+    bas_mac_fmt(ap->bssid, mac, sizeof(mac));
+    bas_text(c, TH_PAD, 58, mac, TH_INK3, 1);
+
+    snprintf(buf, sizeof(buf), "channel %u    %d dBm    %s",
+             (unsigned)ap->channel, (int)ap->rssi, bas_sec_name(ap->sec));
+    bas_text(c, TH_PAD, 76, buf, TH_INK2, 1);
+
+    if (station_count >= 0) {
+        snprintf(buf, sizeof(buf), "%d client%s seen", station_count,
+                 station_count == 1 ? "" : "s");
+        bas_text(c, TH_PAD, 92, buf, TH_INK3, 1);
+    }
+
+    bas_hline(c, TH_PAD, 108, W - 2 * TH_PAD, TH_RULE);
+
+    /* Posture, as a finding rather than a label. */
+    if (bas_sec_likely_mfp(ap->sec)) {
+        bas_fill(c, TH_PAD, 118, 4, 74, TH_BRASS);
+        bas_text(c, TH_PAD + 12, 120, "PROTECTED", TH_BRASS, 2);
+        bas_text(c, TH_PAD + 12, 146, "Management frames are", TH_INK2, 1);
+        bas_text(c, TH_PAD + 12, 160, "protected, so a deauth", TH_INK2, 1);
+        bas_text(c, TH_PAD + 12, 174, "run should bounce. That", TH_INK2, 1);
+        bas_text(c, TH_PAD + 12, 188, "is a result, not a fault.", TH_INK2, 1);
+    } else if (ap->sec == BAS_SEC_WPA2_WPA3) {
+        bas_fill(c, TH_PAD, 118, 4, 60, TH_WARN);
+        bas_text(c, TH_PAD + 12, 120, "TRANSITION", TH_WARN, 2);
+        bas_text(c, TH_PAD + 12, 146, "WPA2/WPA3 mixed mode.", TH_INK2, 1);
+        bas_text(c, TH_PAD + 12, 160, "The WPA2 half is not", TH_INK2, 1);
+        bas_text(c, TH_PAD + 12, 174, "protected.", TH_INK2, 1);
+    } else {
+        bas_fill(c, TH_PAD, 118, 4, 46, TH_INK3);
+        bas_text(c, TH_PAD + 12, 120, "UNPROTECTED", TH_INK, 2);
+        bas_text(c, TH_PAD + 12, 146, "No management frame", TH_INK2, 1);
+        bas_text(c, TH_PAD + 12, 160, "protection advertised.", TH_INK2, 1);
+    }
+
+    foot(c, "LEFT lock target   hold back");
+    bas_display_flush();
+}
+
+/* --- keyboard ------------------------------------------------------------- */
+
+static const char *KB[4] = {
+    "ABCDEFGHIJ",
+    "KLMNOPQRST",
+    "UVWXYZ0123",
+    "456789-_ .",
+};
+
+#define KB_X0 2
+#define KB_Y0 106
+#define KB_KW 23
+#define KB_KH 26
+
+void bas_ui_keyboard(const char *title, const char *buf)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "Authorisation", NULL);
+
+    bas_text(c, TH_PAD, 32, title, TH_INK3, 1);
+
+    /* The field carries the accent because its contents end up in the audit
+     * log — it is the record of under what authority this ran. */
+    bas_fill(c, TH_PAD - 2, 48, W - 2 * TH_PAD + 4, 26, TH_CARD);
+    bas_rect(c, TH_PAD - 2, 48, W - 2 * TH_PAD + 4, 26, TH_BRASS);
+    bas_text_clip(c, TH_PAD + 4, 55, (buf && buf[0]) ? buf : "_", TH_INK, 2,
+                  W - 2 * TH_PAD - 8);
+
+    bas_text(c, TH_PAD, 84, "Name the authorisation for", TH_INK3, 1);
+    bas_text(c, TH_PAD, 96, "this engagement.", TH_INK3, 1);
+
+    for (int r = 0; r < 4; r++) {
+        for (int k = 0; k < 10; k++) {
+            int x = KB_X0 + k * KB_KW;
+            int y = KB_Y0 + r * KB_KH;
+            bas_fill(c, x, y, KB_KW - 2, KB_KH - 2, TH_CARD);
+            bas_rect(c, x, y, KB_KW - 2, KB_KH - 2, TH_RULE);
+            char s[2] = { KB[r][k], '\0' };
+            bas_text(c, x + 8, y + 9, s, TH_INK, 1);
+        }
+    }
+
+    bas_fill(c, TH_PAD, 214, 96, 20, TH_SUNK);
+    bas_rect(c, TH_PAD, 214, 96, 20, TH_RULE2);
+    bas_text(c, TH_PAD + 32, 220, "BACK", TH_INK2, 1);
+
+    bas_fill(c, W - TH_PAD - 96, 214, 96, 20, TH_BRASS);
+    bas_text(c, W - TH_PAD - 62, 220, "DONE", TH_PAPER, 1);
 
     bas_display_flush();
 }
 
-void bas_ui_message(const char *title, const char *line1, const char *line2,
-                    uint16_t accent)
+int bas_ui_keyboard_hit(uint16_t x, uint16_t y)
+{
+    if (y >= 214) {
+        if (x < 110)                    { return -3; }
+        if (x >= (uint16_t)(W - 110))   { return -2; }
+        return -1;
+    }
+    if ((int)y < KB_Y0) {
+        return -1;
+    }
+    int r = ((int)y - KB_Y0) / KB_KH;
+    int k = ((int)x - KB_X0) / KB_KW;
+    if (r < 0 || r > 3 || k < 0 || k > 9) {
+        return -1;
+    }
+    return r * 10 + k;
+}
+
+char bas_ui_keyboard_char(int key)
+{
+    return (key < 0 || key > 39) ? '\0' : KB[key / 10][key % 10];
+}
+
+/* --- an attack about to fire ---------------------------------------------- */
+
+static uint16_t class_colour(bas_class_t k)
+{
+    return k == BAS_CLASS_DISRUPTIVE ? TH_STOP
+         : k == BAS_CLASS_ACTIVE     ? TH_WARN
+                                     : TH_OK;
+}
+
+void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
+                   const bas_engagement_t *e, bas_err_t gate)
 {
     bas_canvas_t *c = bas_display_canvas();
-    bas_canvas_clear(c, BAS_C_BLACK);
-    header(c, NULL);
+    const bas_family_spec_t *s = bas_family(f);
+    page(c, s->name, bas_class_name(s->klass));
 
-    bas_text(c, 16, 60, title, accent, 2);
-    if (line1 != NULL) {
-        bas_text_clip(c, 16, 100, line1, BAS_C_PAPER, 1, W - 32);
+    char buf[64];
+    bas_fill(c, 0, TH_HEAD_H + 1, 4, 30, class_colour(s->klass));
+    bas_text_clip(c, TH_PAD + 4, TH_HEAD_H + 6, s->proves, TH_INK2, 1,
+                  W - 2 * TH_PAD - 4);
+    bas_text_clip(c, TH_PAD + 4, TH_HEAD_H + 19, s->detector, TH_BRASS, 1,
+                  W - 2 * TH_PAD - 4);
+
+    bas_hline(c, TH_PAD, 66, W - 2 * TH_PAD, TH_RULE);
+
+    /* What will go out, in words, before anything can be committed. */
+    bas_text(c, TH_PAD, 76, "WILL EMIT", TH_INK3, 1);
+    snprintf(buf, sizeof(buf), "%u frames over %u s",
+             (unsigned)bas_plan_frame_budget(p), (unsigned)p->seconds);
+    bas_text(c, TH_PAD, 90, buf, TH_INK, 2);
+
+    snprintf(buf, sizeof(buf), "%u per second on channel %u",
+             (unsigned)p->pps,
+             (unsigned)(p->channel ? p->channel : e->target.channel));
+    bas_text(c, TH_PAD, 114, buf, TH_INK3, 1);
+
+    if (s->needs_target) {
+        char mac[18];
+        bas_mac_fmt(e->has_client ? e->client : e->target.bssid, mac,
+                    sizeof(mac));
+        snprintf(buf, sizeof(buf), "at %s", mac);
+        bas_text(c, TH_PAD, 132, buf, TH_INK2, 1);
+        bas_text(c, TH_PAD, 146,
+                 e->has_client ? "one client" : "the access point", TH_INK3, 1);
+    } else {
+        bas_text(c, TH_PAD, 132, "broadcast advertisement", TH_INK2, 1);
+        bas_text(c, TH_PAD, 146, "named " BAS_TEST_PREFIX "nn", TH_INK3, 1);
     }
-    if (line2 != NULL) {
-        bas_text_clip(c, 16, 116, line2, BAS_C_DIM, 1, W - 32);
+
+    bas_hline(c, TH_PAD, 164, W - 2 * TH_PAD, TH_RULE);
+
+    if (gate != BAS_OK) {
+        bas_text(c, TH_PAD, 174, "BLOCKED", TH_STOP, 2);
+        bas_text_clip(c, TH_PAD, 198, bas_err_str(gate), TH_INK, 1,
+                      W - 2 * TH_PAD);
+        foot(c, "hold LEFT to go back");
+    } else if (!bas_tx_supported(f)) {
+        bas_text(c, TH_PAD, 174, "UNAVAILABLE", TH_WARN, 2);
+        bas_text_clip(c, TH_PAD, 198, bas_tx_pending_reason(f), TH_INK2, 1,
+                      W - 2 * TH_PAD);
+        foot(c, "hold LEFT to go back");
+    } else {
+        if (p->clamped_pps || p->clamped_secs) {
+            bas_text(c, TH_PAD, 174, "clamped to the family ceiling", TH_WARN, 1);
+        }
+        bas_text_clip(c, TH_PAD, 190, e->label, TH_BRASS, 1, W - 2 * TH_PAD);
+        foot(c, s->klass == BAS_CLASS_DISRUPTIVE ? "LEFT to hold-arm"
+                                                 : "LEFT to arm");
+    }
+    bas_display_flush();
+}
+
+void bas_ui_hold(bas_family_t f, const bas_engagement_t *e, int pct)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "Arm", "disruptive");
+
+    bas_text(c, TH_PAD, 36, "HOLD TO ARM", TH_STOP, 2);
+    bas_text_clip(c, TH_PAD, 64, bas_family(f)->name, TH_INK, 1,
+                  W - 2 * TH_PAD);
+    bas_text_clip(c, TH_PAD, 78, e->target.hidden ? "(hidden)" : e->target.ssid,
+                  TH_INK3, 1, W - 2 * TH_PAD);
+
+    bas_text(c, TH_PAD, 102, "This family denies service", TH_INK2, 1);
+    bas_text(c, TH_PAD, 116, "to a real device.", TH_INK2, 1);
+
+    if (pct < 0)   { pct = 0; }
+    if (pct > 100) { pct = 100; }
+
+    int pw = W - 2 * TH_PAD;
+    bas_fill(c, TH_PAD, 140, pw, 28, TH_CARD);
+    bas_rect(c, TH_PAD, 140, pw, 28, TH_RULE2);
+    bas_fill(c, TH_PAD + 1, 141, (pw - 2) * pct / 100, 26,
+             pct >= 100 ? TH_STOP : TH_BRASS);
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d%%", pct);
+    bas_text(c, (W - bas_text_width(buf, 2)) / 2, 178, buf,
+             pct > 0 ? TH_INK : TH_INK3, 2);
+
+    foot(c, pct > 0 ? "keep holding" : "hold LEFT, or the screen");
+    bas_display_flush();
+}
+
+void bas_ui_arm(bas_family_t f, const bas_engagement_t *e, int left)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "Arming", NULL);
+
+    bas_text(c, TH_PAD, 38, "ARMED", TH_STOP, 3);
+    bas_text_clip(c, TH_PAD, 74, bas_family(f)->name, TH_INK, 1,
+                  W - 2 * TH_PAD);
+    bas_text_clip(c, TH_PAD, 88, e->target.hidden ? "(hidden)" : e->target.ssid,
+                  TH_INK3, 1, W - 2 * TH_PAD);
+
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", left);
+    bas_text(c, (W - bas_text_width(buf, 8)) / 2, 116, buf, TH_SHINE, 8);
+
+    foot(c, "any button aborts");
+    bas_display_flush();
+}
+
+void bas_ui_running(bas_family_t f, const bas_engagement_t *e,
+                    const bas_tx_result_t *p, uint32_t budget)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    bas_canvas_clear(c, TH_PAPER);
+
+    /* The banner is a safety mechanism rather than decoration: while this
+     * device is emitting, the screen says so and cannot be turned off. */
+    bas_fill(c, 0, 0, W, TH_HEAD_H, TH_STOP);
+    bas_text(c, TH_PAD, 9, "TRANSMITTING", TH_PAPER, 1);
+    bas_ui_battery(c, W - TH_PAD - 22, 8);
+
+    char buf[64];
+    bas_text_clip(c, TH_PAD, 36, bas_family(f)->name, TH_INK, 2,
+                  W - 2 * TH_PAD);
+    bas_text_clip(c, TH_PAD, 60, e->target.hidden ? "(hidden)" : e->target.ssid,
+                  TH_INK3, 1, W - 2 * TH_PAD);
+
+    snprintf(buf, sizeof(buf), "%u", (unsigned)p->frames_sent);
+    bas_text(c, TH_PAD, 82, buf, TH_INK, 5);
+    bas_text(c, TH_PAD, 130, "frames sent", TH_INK3, 1);
+
+    int pw = W - 2 * TH_PAD;
+    bas_fill(c, TH_PAD, 150, pw, 12, TH_CARD);
+    bas_rect(c, TH_PAD, 150, pw, 12, TH_RULE2);
+    if (budget > 0u) {
+        uint32_t done = p->frames_sent > budget ? budget : p->frames_sent;
+        bas_fill(c, TH_PAD + 1, 151, (int)((uint32_t)(pw - 2) * done / budget),
+                 10, TH_SHINE);
+    }
+
+    snprintf(buf, sizeof(buf), "of %u    %u.%us elapsed", (unsigned)budget,
+             (unsigned)(p->elapsed_ms / 1000),
+             (unsigned)((p->elapsed_ms % 1000) / 100));
+    bas_text(c, TH_PAD, 168, buf, TH_INK3, 1);
+
+    if (p->tx_errors > 0u) {
+        snprintf(buf, sizeof(buf), "%u rejected by the radio",
+                 (unsigned)p->tx_errors);
+        bas_text(c, TH_PAD, 186, buf, TH_WARN, 1);
+    }
+    if (p->frames_refused > 0u) {
+        snprintf(buf, sizeof(buf), "%u refused by the gate",
+                 (unsigned)p->frames_refused);
+        bas_text(c, TH_PAD, 200, buf, TH_STOP, 1);
+    }
+
+    foot(c, "any button stops the run");
+    bas_display_flush();
+}
+
+void bas_ui_ask(bas_family_t f, uint32_t frames, uint32_t grace_left_ms)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "Score", NULL);
+
+    char buf[64];
+    bas_text(c, TH_PAD, 36, "Did it alarm?", TH_INK, 2);
+
+    snprintf(buf, sizeof(buf), "%u frames of %s", (unsigned)frames,
+             bas_family(f)->name);
+    bas_text_clip(c, TH_PAD, 64, buf, TH_INK3, 1, W - 2 * TH_PAD);
+
+    bas_text(c, TH_PAD, 88, "Press LEFT the moment your", TH_INK2, 1);
+    bas_text(c, TH_PAD, 102, "detector reacts.", TH_INK2, 1);
+
+    /* Honesty about what this measurement is. */
+    bas_fill(c, TH_PAD, 122, 3, 44, TH_RULE2);
+    bas_text(c, TH_PAD + 10, 124, "Operator-timed, so the", TH_INK3, 1);
+    bas_text(c, TH_PAD + 10, 138, "latency includes you. It is", TH_INK3, 1);
+    bas_text(c, TH_PAD + 10, 152, "never averaged with a", TH_INK3, 1);
+    bas_text(c, TH_PAD + 10, 166, "machine-reported alarm.", TH_INK3, 1);
+
+    int pw = W - 2 * TH_PAD;
+    bas_fill(c, TH_PAD, 186, pw, 10, TH_CARD);
+    bas_rect(c, TH_PAD, 186, pw, 10, TH_RULE2);
+    uint32_t span = BAS_GRACE_DEFAULT_MS;
+    uint32_t left = grace_left_ms > span ? span : grace_left_ms;
+    bas_fill(c, TH_PAD + 1, 187, (int)((uint32_t)(pw - 2) * left / span), 8,
+             TH_BRASS);
+
+    foot(c, "LEFT alarmed   hold LEFT missed");
+    bas_display_flush();
+}
+
+void bas_ui_tx_failed(bas_family_t f, const bas_tx_result_t *r)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "Not sent", NULL);
+
+    char buf[64];
+    bas_text(c, TH_PAD, 36, "NOTHING WENT OUT", TH_STOP, 2);
+    bas_text_clip(c, TH_PAD, 62, bas_family(f)->name, TH_INK, 1,
+                  W - 2 * TH_PAD);
+
+    snprintf(buf, sizeof(buf), "%u sent, %u rejected",
+             (unsigned)r->frames_sent, (unsigned)r->tx_errors);
+    bas_text(c, TH_PAD, 82, buf, TH_INK2, 1);
+
+    if (r->frames_refused > 0u) {
+        bas_text_clip(c, TH_PAD, 98, bas_err_str(r->stopped_by), TH_WARN, 1,
+                      W - 2 * TH_PAD);
+    } else {
+        bas_text(c, TH_PAD, 98, "The radio rejected them.", TH_INK3, 1);
+    }
+
+    bas_hline(c, TH_PAD, 120, W - 2 * TH_PAD, TH_RULE);
+
+    bas_text(c, TH_PAD, 132, "This run is not scored.", TH_BRASS, 1);
+    bas_text(c, TH_PAD, 154, "A detector cannot miss what", TH_INK2, 1);
+    bas_text(c, TH_PAD, 168, "was never sent, and recording", TH_INK2, 1);
+    bas_text(c, TH_PAD, 182, "a MISSED here would blame the", TH_INK2, 1);
+    bas_text(c, TH_PAD, 196, "wrong half of the test.", TH_INK2, 1);
+
+    foot(c, "LEFT to continue");
+    bas_display_flush();
+}
+
+void bas_ui_results(const bas_card_t *card, uint32_t now_ms)
+{
+    bas_canvas_t *c = bas_display_canvas();
+
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%u runs", (unsigned)card->count);
+    page(c, "Results", buf);
+
+    bas_tally_t t;
+    bas_card_tally(card, now_ms, &t);
+
+    /* Three figures: the point of the whole instrument. */
+    struct { const char *l; int v; uint16_t col; } col[3] = {
+        { "CAUGHT", t.caught, TH_OK },
+        { "LATE",   t.late,   TH_WARN },
+        { "MISSED", t.missed, TH_STOP },
+    };
+    for (int i = 0; i < 3; i++) {
+        int x = TH_PAD + i * 74;
+        snprintf(buf, sizeof(buf), "%d", col[i].v);
+        bas_text(c, x, 36, buf, col[i].col, 4);
+        bas_text(c, x, 74, col[i].l, TH_INK3, 1);
+    }
+
+    bas_hline(c, TH_PAD, 92, W - 2 * TH_PAD, TH_RULE);
+
+    if (t.best_latency_ms >= 0) {
+        snprintf(buf, sizeof(buf), "fastest %d.%01ds    slowest %d.%01ds",
+                 (int)(t.best_latency_ms / 1000),
+                 (int)((t.best_latency_ms % 1000) / 100),
+                 (int)(t.worst_latency_ms / 1000),
+                 (int)((t.worst_latency_ms % 1000) / 100));
+        bas_text(c, TH_PAD, 100, buf, TH_INK2, 1);
+    } else {
+        bas_text(c, TH_PAD, 100, "nothing caught yet", TH_INK3, 1);
+    }
+
+    int y = 118;
+    int shown = 0;
+    for (int i = (int)card->count - 1; i >= 0 && shown < 7; i--, shown++) {
+        char line[96];
+        bas_run_line(&card->r[i], now_ms, line, sizeof(line));
+        bas_verdict_t v = bas_run_verdict(&card->r[i], now_ms);
+        uint16_t cc = v == BAS_VERDICT_CAUGHT ? TH_OK
+                    : v == BAS_VERDICT_LATE   ? TH_WARN
+                    : v == BAS_VERDICT_MISSED ? TH_STOP
+                                              : TH_INK3;
+        bas_fill(c, TH_PAD, y + 1, 3, 9, cc);
+        bas_text_clip(c, TH_PAD + 8, y, line, TH_INK2, 1,
+                      W - 2 * TH_PAD - 8);
+        y += 13;
+    }
+
+    foot(c, "LEFT to continue");
+    bas_display_flush();
+}
+
+void bas_ui_note(const char *title, const char *l1, const char *l2,
+                 uint16_t accent)
+{
+    bas_canvas_t *c = bas_display_canvas();
+    page(c, "BASANOS", NULL);
+
+    bas_fill(c, 0, TH_HEAD_H + 10, 4, 26, accent);
+    bas_text_clip(c, TH_PAD + 4, TH_HEAD_H + 14, title, accent, 2,
+                  W - 2 * TH_PAD);
+    if (l1 != NULL) {
+        bas_text_clip(c, TH_PAD, 100, l1, TH_INK, 1, W - 2 * TH_PAD);
+    }
+    if (l2 != NULL) {
+        bas_text_clip(c, TH_PAD, 116, l2, TH_INK3, 1, W - 2 * TH_PAD);
     }
     bas_display_flush();
 }
@@ -219,46 +804,41 @@ void bas_ui_touchtest(bool present, uint8_t chip_id,
                       bool down, uint16_t x, uint16_t y, int taps)
 {
     bas_canvas_t *c = bas_display_canvas();
-    bas_canvas_clear(c, BAS_C_BLACK);
-    header(c, "touch check");
+    page(c, "Touch check", NULL);
 
     char buf[48];
 
     if (!present) {
-        bas_text(c, 16, 60, "NO CONTROLLER", BAS_C_STOP, 2);
-        bas_text(c, 16, 96, "Nothing answered at", BAS_C_DIM, 1);
-        bas_text(c, 16, 110, "I2C address 0x15.", BAS_C_DIM, 1);
-        bas_text(c, 16, 132, "Buttons still work:", BAS_C_PAPER, 1);
-        bas_text(c, 16, 146, "RIGHT scrolls, LEFT", BAS_C_DIM, 1);
-        bas_text(c, 16, 160, "opens a network.", BAS_C_DIM, 1);
+        bas_text(c, TH_PAD, 44, "NO CONTROLLER", TH_STOP, 2);
+        bas_text(c, TH_PAD, 76, "Nothing answered at 0x15.", TH_INK2, 1);
+        bas_text(c, TH_PAD, 100, "The buttons still work:", TH_INK, 1);
+        bas_text(c, TH_PAD, 114, "RIGHT moves, LEFT opens.", TH_INK2, 1);
         bas_display_flush();
         return;
     }
 
-    snprintf(buf, sizeof(buf), "CST816  id 0x%02X", (unsigned)chip_id);
-    bas_text(c, 16, 30, buf, BAS_C_BRASS, 1);
+    snprintf(buf, sizeof(buf), "CST816   id 0x%02X", (unsigned)chip_id);
+    bas_text(c, TH_PAD, 34, buf, TH_BRASS, 1);
 
-    /* A frame marking the live area, so it is obvious whether a press lands
-     * where the finger actually is or somewhere mirrored. */
-    bas_rect(c, 20, 46, 200, 150, BAS_C_FAINT);
+    bas_fill(c, 20, 50, 200, 146, TH_CARD);
+    bas_rect(c, 20, 50, 200, 146, TH_RULE2);
 
     if (down) {
         int px = 20 + (int)((uint32_t)x * 200u / 240u);
-        int py = 46 + (int)((uint32_t)y * 150u / 240u);
-        bas_fill(c, px - 10, py, 21, 1, BAS_C_SHINE);
-        bas_fill(c, px, py - 10, 1, 21, BAS_C_SHINE);
-        bas_fill(c, px - 2, py - 2, 5, 5, BAS_C_SHINE);
-
-        snprintf(buf, sizeof(buf), "x %3u  y %3u", (unsigned)x, (unsigned)y);
-        bas_text(c, 20, 202, buf, BAS_C_PAPER, 1);
+        int py = 50 + (int)((uint32_t)y * 146u / 240u);
+        bas_fill(c, px - 10, py, 21, 1, TH_SHINE);
+        bas_fill(c, px, py - 10, 1, 21, TH_SHINE);
+        bas_fill(c, px - 2, py - 2, 5, 5, TH_STOP);
+        snprintf(buf, sizeof(buf), "x %3u   y %3u", (unsigned)x, (unsigned)y);
+        bas_text(c, TH_PAD, 202, buf, TH_INK, 1);
     } else {
-        bas_text(c, 20, 202, "touch the screen", BAS_C_DIM, 1);
+        bas_text(c, TH_PAD, 202, "touch the panel", TH_INK3, 1);
     }
 
     snprintf(buf, sizeof(buf), "%d taps", taps);
-    bas_text(c, W - 20 - bas_text_width(buf, 1), 202, buf,
-             taps > 0 ? BAS_C_OK : BAS_C_DIM, 1);
+    bas_text(c, W - TH_PAD - bas_text_width(buf, 1), 202, buf,
+             taps > 0 ? TH_OK : TH_INK3, 1);
 
-    bas_text(c, 20, 220, "RIGHT to continue", BAS_C_BRASS, 1);
+    foot(c, "RIGHT to continue");
     bas_display_flush();
 }

@@ -23,6 +23,7 @@
  */
 #include "display.h"
 #include "board.h"
+#include "theme.h"
 
 #include "driver/ledc.h"
 #include "esp_heap_caps.h"
@@ -156,7 +157,7 @@ esp_err_t bas_display_init(void)
     }
 
     bas_canvas_init(&s_canvas, s_fb, BOARD_LCD_W, BOARD_LCD_H);
-    bas_canvas_clear(&s_canvas, BAS_C_BLACK);
+    bas_canvas_clear(&s_canvas, TH_PAPER);
 
     backlight_init();
 

@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "basanos_main.c" "display.c" "canvas.c" "font5x7.c" "selftest.c" "ui.c" "touch.c" "frames.c" "transmit.c" "ui_attack.c" "power.c"
+    SRCS "basanos_main.c" "display.c" "canvas.c" "font5x7.c" "selftest.c" "ui.c" "touch.c" "frames.c" "transmit.c" "power.c" "console.c"
     INCLUDE_DIRS "."
-    REQUIRES engine rbac score esp_lcd driver esp_driver_i2c esp_wifi nvs_flash esp_timer esp_hw_support esp_adc)
+    REQUIRES engine rbac score esp_lcd driver esp_driver_i2c esp_wifi nvs_flash esp_timer esp_hw_support esp_adc esp_driver_usb_serial_jtag vfs)

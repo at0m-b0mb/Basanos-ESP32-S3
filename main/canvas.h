@@ -23,19 +23,7 @@ typedef struct {
     uint32_t  oob;      /* clipped writes — must stay 0 in a correct layout */
 } bas_canvas_t;
 
-/* The palette. This is the house dark theme: true black, warm paper text,
- * two golds — a deep brass that stays readable at caption size and a bright
- * shine reserved for marks that carry no words. */
-#define BAS_C_BLACK   0x0000
-#define BAS_C_PAPER   0xEF7D    /* warm off-white, body text                */
-#define BAS_C_DIM     0x8410    /* secondary text                           */
-#define BAS_C_FAINT   0x39E7    /* hairlines                                */
-#define BAS_C_BRASS   0xA486    /* deep gold, readable as small text        */
-#define BAS_C_SHINE   0xCD84    /* bright gold, marks only                  */
-#define BAS_C_OK      0x5CCB    /* muted green                              */
-#define BAS_C_WARN    0xD4A4    /* amber                                    */
-#define BAS_C_STOP    0xC2A9    /* muted red                                */
-#define BAS_C_SURFACE 0x1082    /* raised panel over black                  */
+/* Colours live in theme.h. The canvas knows nothing about them. */
 
 void bas_canvas_init(bas_canvas_t *c, uint16_t *px, int w, int h);
 void bas_canvas_clear(bas_canvas_t *c, uint16_t colour);

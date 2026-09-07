@@ -157,10 +157,22 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
             len = bas_frame_auth(buf, e->target.bssid, synth, seq);
             break;
         case BAS_FAM_BEACON: {
+            /* Advertise only as many networks as can be beaconed at a credible
+             * interval. A real AP beacons about every 100 ms; a synthetic one
+             * beaconed once a second is missed by most client scans and reaches
+             * a detector as an intermittent trickle rather than the flood it is
+             * meant to be. At 5 beacons per SSID per second, 20 pps advertises
+             * 4 networks and 100 pps advertises 20 -- the rate buys breadth,
+             * instead of breadth diluting the rate. */
+            uint16_t n_ssids = (uint16_t)(p.pps / 5u);
+            if (n_ssids < 1u)  { n_ssids = 1u; }
+            if (n_ssids > 24u) { n_ssids = 24u; }
+
+            uint16_t which = (uint16_t)(seq % n_ssids);
             char ssid[33];
             snprintf(ssid, sizeof(ssid), BAS_TEST_PREFIX "%02u",
-                     (unsigned)(seq % 24u));
-            bas_frame_synth_mac(synth, seq % 24u);
+                     (unsigned)which);
+            bas_frame_synth_mac(synth, which);
             len = bas_frame_beacon(buf, synth, ssid, ch, seq);
             break;
         }
@@ -198,7 +210,12 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
         }
         seq = (uint16_t)((seq + 1u) & 0x0FFFu);
 
-        if (tick != NULL && (t - last_tick) >= 100u) {
+        /* 250 ms, not 100. The tick repaints the whole 112 KB panel, and at
+         * 100 ms that repaint stole enough of the loop to hold the emission
+         * well under its requested rate -- 439 frames where 600 were asked
+         * for. A quarter-second abort latency is not noticeable; a rate 27%
+         * below nominal would quietly distort every measurement. */
+        if (tick != NULL && (t - last_tick) >= 250u) {
             last_tick = t;
             r.elapsed_ms = t - start;
             if (!tick(&r, ctx)) {

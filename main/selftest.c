@@ -10,6 +10,7 @@
 #include "basanos/station.h"
 #include "basanos/survey.h"
 #include "canvas.h"
+#include "theme.h"
 
 #include "esp_log.h"
 
@@ -163,9 +164,9 @@ void bas_selftest_run(bas_selftest_t *out)
     bas_canvas_t tc;
     bas_canvas_init(&tc, tiny_px, 16, 16);
     bas_canvas_clear(&tc, 0);
-    bas_text(&tc, 1, 1, "ok", BAS_C_PAPER, 1);
+    bas_text(&tc, 1, 1, "ok", TH_INK, 1);
     ck(tc.oob == 0u, "canvas in bounds");
-    bas_text(&tc, 60, 1, "off", BAS_C_PAPER, 1);
+    bas_text(&tc, 60, 1, "off", TH_INK, 1);
     ck(tc.oob > 0u, "canvas counts overflow");
 
     ESP_LOGI(TAG, "%d checks, %d failures", r.checks, r.failures);

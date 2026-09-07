@@ -11,7 +11,18 @@
 # Usage: tools/flash.sh [port]
 set -euo pipefail
 
-PORT="${1:-/dev/cu.usbmodem2101}"
+# The board re-enumerates with a different number on every replug, so find it
+# rather than hardcoding a port.
+if [ -n "${1:-}" ]; then
+    PORT="$1"
+else
+    PORT="$(ls -t /dev/cu.usbmodem* 2>/dev/null | head -1)"
+fi
+if [ -z "$PORT" ]; then
+    echo "no ESP32 serial port found — is the board plugged in?" >&2
+    exit 1
+fi
+echo "port: $PORT"
 cd "$(dirname "$0")/.."
 
 if [ ! -f build/basanos.bin ]; then

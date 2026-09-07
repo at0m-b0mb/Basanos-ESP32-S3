@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="Basanos — the touchstone for wireless defences">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#8A6D2F"/>
+      <stop offset="0.5"  stop-color="#C9A227"/>
+      <stop offset="1"    stop-color="#8A6D2F"/>
+    </linearGradient>
+    <linearGradient id="stone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A2723"/>
+      <stop offset="1" stop-color="#141210"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="340" fill="#F3F1EC"/>
+
+  <!-- The touchstone itself: a dark slate with a gold streak rubbed across it,
+       which is exactly what the instrument does to a defence. -->
+  <g transform="translate(92 84)">
+    <rect x="0" y="0" width="150" height="172" rx="6" fill="url(#stone)"/>
+    <rect x="0" y="0" width="150" height="172" rx="6" fill="none" stroke="#3A352E" stroke-width="2"/>
+    <path d="M28 132 C 52 96, 78 74, 118 44" stroke="url(#gold)" stroke-width="11"
+          stroke-linecap="round" fill="none" opacity="0.95"/>
+    <path d="M34 146 C 58 112, 84 92, 122 62" stroke="#C9A227" stroke-width="4"
+          stroke-linecap="round" fill="none" opacity="0.5"/>
+  </g>
+
+  <g transform="translate(300 0)">
+    <text x="0" y="132" font-family="Georgia, 'Times New Roman', serif"
+          font-size="82" font-weight="700" fill="#1A1814" letter-spacing="2">BASANOS</text>
+    <rect x="4" y="150" width="352" height="4" fill="url(#gold)"/>
+
+    <text x="4" y="192" font-family="Georgia, serif" font-size="25" font-style="italic" fill="#6B6459">
+      the touchstone for wireless defences
+    </text>
+
+    <text x="4" y="236" font-family="'Helvetica Neue', Arial, sans-serif" font-size="19" fill="#4A443A">
+      Every other tool asks whether it can knock something over.
+    </text>
+    <text x="4" y="262" font-family="'Helvetica Neue', Arial, sans-serif" font-size="19" fill="#4A443A">
+      This one asks whether your detector saw it.
+    </text>
+
+    <g font-family="'SF Mono', Menlo, monospace" font-size="14" fill="#8A6D2F">
+      <rect x="4"   y="286" width="132" height="26" fill="none" stroke="#DFDACE"/>
+      <text x="18"  y="304">ESP32-S3</text>
+      <rect x="148" y="286" width="150" height="26" fill="none" stroke="#DFDACE"/>
+      <text x="162" y="304">587 host checks</text>
+      <rect x="310" y="286" width="176" height="26" fill="none" stroke="#DFDACE"/>
+      <text x="324" y="304">AUTHORISED USE</text>
+    </g>
+  </g>
+</svg>

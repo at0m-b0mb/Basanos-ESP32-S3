@@ -1,31 +1,90 @@
-/* Basanos — screens. SPDX-License-Identifier: MIT */
+/* Basanos — the screen set.
+ *
+ * One generic list renderer does most of the work, so every menu in the device
+ * has the same edges, baselines and selection treatment. Screens that are not
+ * lists are the ones where the content genuinely differs: the hub, a target,
+ * an attack about to fire, a run in flight, the results.
+ *
+ * SPDX-License-Identifier: MIT
+ */
 #ifndef BASANOS_UI_H
 #define BASANOS_UI_H
 
+#include "basanos/engage.h"
+#include "basanos/family.h"
+#include "basanos/rbac.h"
+#include "basanos/score.h"
 #include "basanos/station.h"
 #include "basanos/target.h"
 #include "selftest.h"
+#include "transmit.h"
 
-/* Battery pip, drawn at the top right of every header. Shows a charging mark
- * rather than a level while the charger is attached, because a level that
- * climbs on its own reads as a fault. */
+/* --- chrome --------------------------------------------------------------- */
+
+/* Battery pip. Draws a charging mark rather than a level while a supply is
+ * attached, because a bar that climbs on its own reads as a fault. */
 void bas_ui_battery(void *canvas, int x, int y);
+
+/* --- generic list --------------------------------------------------------- */
+
+typedef struct {
+    const char *title;
+    const char *sub;      /* second line, may be NULL                      */
+    uint16_t    stripe;   /* left severity stripe; 0 for none              */
+    bool        enabled;  /* disabled rows draw greyed and are not chosen  */
+} bas_row_t;
+
+/* `right` is the small label at the top right of the header, may be NULL.
+ * The list scrolls to keep `sel` visible. */
+void bas_ui_list(const char *title, const char *right,
+                 const bas_row_t *rows, int n, int sel,
+                 const char *footer);
+
+/* Which row a touch at (x,y) lands on, given the current selection so the
+ * scroll offset matches what was drawn. -1 for none. */
+int bas_ui_list_hit(uint16_t x, uint16_t y, int sel, int n);
+
+/* --- fixed screens -------------------------------------------------------- */
 
 void bas_ui_splash(void);
 void bas_ui_selftest(const bas_selftest_t *r);
-void bas_ui_scanning(uint8_t channel);
+void bas_ui_scanning(uint8_t channel, int found);
 
-/* The target picker. `sel` is the highlighted row; the list scrolls to keep it
- * visible. Draws the security posture next to each network because that is
- * what decides whether a run against it is worth spending. */
-void bas_ui_picker(const bas_scan_t *s, int sel);
+/* The hub. `sel` highlights one of the four sections. */
+typedef enum {
+    BAS_HOME_WIFI = 0,
+    BAS_HOME_BLE,
+    BAS_HOME_RECON,
+    BAS_HOME_RESULTS,
+    BAS_HOME__COUNT
+} bas_home_t;
 
-void bas_ui_message(const char *title, const char *line1, const char *line2,
-                    uint16_t accent);
+void bas_ui_home(const bas_engagement_t *e, const bas_scan_t *s,
+                 const bas_card_t *card, int sel);
+int  bas_ui_home_hit(uint16_t x, uint16_t y);
 
-/* Live touch check. Draws a crosshair wherever the glass is being touched and
- * prints the raw coordinates, so a wrong axis mapping is visible in one press
- * instead of being inferred from a menu that selects the wrong row. */
+void bas_ui_networks(const bas_scan_t *s, int sel);
+void bas_ui_target(const bas_ap_t *ap, int station_count);
+
+void bas_ui_keyboard(const char *title, const char *buf);
+int  bas_ui_keyboard_hit(uint16_t x, uint16_t y);  /* -1 none -2 done -3 back */
+char bas_ui_keyboard_char(int key);
+
+void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
+                   const bas_engagement_t *e, bas_err_t gate);
+void bas_ui_hold(bas_family_t f, const bas_engagement_t *e, int pct);
+void bas_ui_arm(bas_family_t f, const bas_engagement_t *e, int left);
+void bas_ui_running(bas_family_t f, const bas_engagement_t *e,
+                    const bas_tx_result_t *p, uint32_t budget);
+void bas_ui_ask(bas_family_t f, uint32_t frames, uint32_t grace_left_ms);
+void bas_ui_tx_failed(bas_family_t f, const bas_tx_result_t *r);
+void bas_ui_results(const bas_card_t *c, uint32_t now_ms);
+
+void bas_ui_note(const char *title, const char *l1, const char *l2,
+                 uint16_t accent);
+
+/* Live touch check, kept from bring-up: a crosshair where the glass is
+ * pressed, so a wrong axis mapping is one press to spot. */
 void bas_ui_touchtest(bool present, uint8_t chip_id,
                       bool down, uint16_t x, uint16_t y, int taps);
 
