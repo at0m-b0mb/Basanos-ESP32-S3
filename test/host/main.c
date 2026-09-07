@@ -1,0 +1,25 @@
+/* Basanos — host test entry point. SPDX-License-Identifier: MIT */
+#include "harness.h"
+
+int g_checks = 0;
+int g_fails  = 0;
+const char *g_suite = "";
+
+int main(void)
+{
+    printf("Basanos host tests\n\n");
+
+    suite_target();
+    suite_engage();
+    suite_family();
+    suite_rbac();
+    suite_score();
+
+    printf("\n%d checks, %d failures\n", g_checks, g_fails);
+    if (g_fails != 0) {
+        printf("FAILED\n");
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
