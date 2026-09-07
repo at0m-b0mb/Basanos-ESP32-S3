@@ -7,3 +7,4 @@ test/host/basanos_tests
 test/host/basanos_tests_asan
 *.dSYM/
 .DS_Store
+build/log/
