@@ -1,5 +1,6 @@
 /* Basanos — the promiscuous receiver. SPDX-License-Identifier: MIT */
 #include "sniffer.h"
+#include "basanos/ie.h"
 #include "board.h"
 
 #include "esp_log.h"
@@ -13,6 +14,7 @@ static const char *TAG = "bas_sniff";
 static bas_fcount_t     s_frames;
 static bas_chansurvey_t s_chan;
 static bas_stalist_t    s_stations;
+static bas_scan_t       s_nets;
 static bas_probe_t      s_probes[BAS_MAX_PROBES];
 static int              s_probe_n;
 
@@ -245,6 +247,34 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 
     if (k == BAS_FT_BEACON) {
         bas_chan_note_ap(&s_chan, ch);
+
+        /* Assemble the network list passively. The posture is parsed only on
+         * a first sighting: walking every element of every beacon, hundreds a
+         * second, to re-learn facts that do not change would cost the receiver
+         * far more than it is worth. */
+        int idx = bas_scan_find_bssid(&s_nets, h->a3);
+        if (idx >= 0) {
+            s_nets.ap[idx].rssi         = rssi;
+            s_nets.ap[idx].last_seen_ms = t;
+        } else if ((size_t)pkt->rx_ctrl.sig_len > sizeof(hdr_t) + 12u) {
+            bas_ap_t ap;
+            memset(&ap, 0, sizeof(ap));
+            memcpy(ap.bssid, h->a3, 6);
+            ap.rssi          = rssi;
+            ap.channel       = ch;
+            ap.first_seen_ms = t;
+            ap.last_seen_ms  = t;
+
+            /* Past the fixed beacon body: timestamp, interval, capability. */
+            const uint8_t *ies = &pkt->payload[sizeof(hdr_t) + 12u];
+            size_t ie_len = (size_t)pkt->rx_ctrl.sig_len - sizeof(hdr_t) - 12u;
+            bas_ie_parse(ies, ie_len, &ap, NULL);
+            if (ap.channel == 0u) { ap.channel = ch; }
+
+            if (bas_ap_check(&ap) == BAS_OK) {
+                bas_scan_observe(&s_nets, &ap);
+            }
+        }
         return;
     }
 
@@ -404,6 +434,7 @@ void bas_sniff_reset(void)
     bas_fcount_reset(&s_frames, now_ms());
     bas_chan_reset(&s_chan);
     bas_sta_reset(&s_stations);
+    bas_scan_reset(&s_nets);
     memset(s_probes, 0, sizeof(s_probes));
     s_probe_n = 0;
 }
@@ -485,6 +516,29 @@ void bas_sniff_hop(uint32_t dwell_ms)
     esp_wifi_set_channel(s_channel, WIFI_SECOND_CHAN_NONE);
     s_dwell_start = t;
     s_hopping = true;
+}
+
+const bas_scan_t *bas_sniff_networks(void) { return &s_nets; }
+
+int bas_sniff_merge_networks(bas_scan_t *dst)
+{
+    if (dst == NULL) {
+        return 0;
+    }
+    int added = 0;
+    for (uint8_t i = 0; i < s_nets.count; i++) {
+        /* Only the ones not already known: an active scan carries the same
+         * facts and there is nothing to gain by overwriting them. */
+        if (bas_scan_find_bssid(dst, s_nets.ap[i].bssid) < 0) {
+            if (bas_scan_observe(dst, &s_nets.ap[i]) >= 0) {
+                added++;
+            }
+        }
+    }
+    if (added > 0) {
+        bas_scan_sort_rssi(dst);
+    }
+    return added;
 }
 
 const bas_fcount_t     *bas_sniff_frames(void)   { return &s_frames; }

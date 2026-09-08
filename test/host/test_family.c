@@ -136,13 +136,34 @@ void suite_family(void)
     CHECK(!p.clamped_secs);
     CHECK_EQ(bas_plan_frame_budget(&p), 20);
 
-    /* Zero means "use the default", not "emit nothing forever". */
+    /* Zero pps means "use the default". Zero seconds means "continuous":
+     * unbounded in duration, still bounded by the rate ceiling and by the
+     * engagement, which is re-checked before every frame. */
     bas_plan_default(&p, BAS_FAM_DEAUTH);
     p.pps = 0;
     p.seconds = 0;
     CHECK_EQ(bas_plan_validate(&p, ADMIN, &e, 2000), BAS_OK);
     CHECK_EQ(p.pps, d->default_pps);
-    CHECK_EQ(p.seconds, 1);
+    CHECK(p.continuous);
+    /* No total, so nothing draws a progress bar that cannot progress. */
+    CHECK_EQ(bas_plan_frame_budget(&p), 0);
+    CHECK(!p.clamped_secs);
+
+    /* A continuous run does not escape the rate ceiling. */
+    bas_plan_default(&p, BAS_FAM_DEAUTH);
+    p.pps = 60000;
+    p.seconds = 0;
+    CHECK_EQ(bas_plan_validate(&p, ADMIN, &e, 2000), BAS_OK);
+    CHECK(p.continuous);
+    CHECK_EQ(p.pps, d->max_pps);
+    CHECK(p.clamped_pps);
+
+    /* A bounded run is still bounded. */
+    bas_plan_default(&p, BAS_FAM_DEAUTH);
+    p.seconds = 5;
+    CHECK_EQ(bas_plan_validate(&p, ADMIN, &e, 2000), BAS_OK);
+    CHECK(!p.continuous);
+    CHECK(bas_plan_frame_budget(&p) > 0);
 
     SUITE("family: channel resolution and the regulatory clamp");
 

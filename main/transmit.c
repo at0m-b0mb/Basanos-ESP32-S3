@@ -232,14 +232,20 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
     bas_ble_reset_count();
 
     bool spam = (p->fam == BAS_FAM_BLE_ADV);
+    const bool     forever  = p->continuous;
     const uint32_t start    = now_ms();
     const uint32_t deadline = start + (uint32_t)p->seconds * 1000u;
     const uint32_t period   = (p->pps > 0u) ? (1000u / p->pps) : 200u;
     const uint32_t total    = bas_plan_frame_budget(p);
 
-    ESP_LOGI(TAG, "ble %s: %u identities over %us",
-             spam ? "advert spam" : "tracker dwell",
-             (unsigned)(spam ? total : 1u), (unsigned)p->seconds);
+    if (forever) {
+        ESP_LOGI(TAG, "ble %s: continuous until stopped",
+                 spam ? "advert spam" : "tracker dwell");
+    } else {
+        ESP_LOGI(TAG, "ble %s: %u identities over %us",
+                 spam ? "advert spam" : "tracker dwell",
+                 (unsigned)(spam ? total : 1u), (unsigned)p->seconds);
+    }
 
     uint32_t seed = 0;
     uint32_t last_tick = start;
@@ -257,7 +263,10 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
         }
     }
 
-    while (now_ms() < deadline) {
+    /* Same rule as the 802.11 families: continuous means until stopped or
+     * until the engagement ends, and the engagement is what actually bounds
+     * it -- checked here, every pass. */
+    while (forever || now_ms() < deadline) {
         uint32_t t = now_ms();
 
         bas_err_t g = bas_engage_check(e, t);
@@ -266,7 +275,7 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
             break;
         }
 
-        if (spam && r.frames_sent < total) {
+        if (spam && (forever || r.frames_sent < total)) {
             char name[24];
             snprintf(name, sizeof(name), BAS_TEST_PREFIX "%02u",
                      (unsigned)(seed % 100u));
@@ -338,6 +347,13 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
 
     uint8_t ch = (p.channel != 0u) ? p.channel : e->target.channel;
 
+    /* Idle discovery hops the band, which would drag the radio off channel in
+     * the middle of a burst. Karma is the exception: it needs the receiver, on
+     * this channel, for the whole run. */
+    if (bas_sniff_active() && p.fam != BAS_FAM_KARMA_RESP) {
+        bas_sniff_stop();
+    }
+
     /* Karma answers what it hears, so it needs the receiver on the same
      * channel it is about to answer on. Every other family only transmits. */
     bool karma = (p.fam == BAS_FAM_KARMA_RESP);
@@ -379,7 +395,12 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
     const uint32_t total     = bas_plan_frame_budget(&p);
     const uint32_t start     = now_ms();
     const uint32_t deadline  = start + (uint32_t)p.seconds * 1000u;
+    const bool     forever   = p.continuous;
 
+    if (forever) {
+        ESP_LOGI(TAG, "run: %s ch%u %u pps CONTINUOUS until stopped",
+                 bas_family(p.fam)->name, (unsigned)ch, (unsigned)p.pps);
+    }
     ESP_LOGI(TAG, "run: %s ch%u %u pps for %us (%u frames) at %02X:%02X:%02X:%02X:%02X:%02X",
              bas_family(p.fam)->name, (unsigned)ch, (unsigned)p.pps,
              (unsigned)p.seconds, (unsigned)total,
@@ -397,7 +418,12 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
     /* Karma runs for its full window regardless of how many answers it gets:
      * the budget is a ceiling on output, and a quiet room legitimately fills
      * none of it. */
-    while (now_ms() < deadline && (karma || r.frames_sent < total)) {
+    /* A continuous run has no deadline and no budget. What ends it is the
+     * operator stopping it, or the engagement lock refusing the next frame --
+     * which is checked inside the loop, every frame, and is why "forever" is
+     * still bounded. */
+    while ((forever || now_ms() < deadline) &&
+           (forever || karma || r.frames_sent < total)) {
         uint32_t t = now_ms();
 
         /* Per frame, not per run. This is what makes an expiring engagement

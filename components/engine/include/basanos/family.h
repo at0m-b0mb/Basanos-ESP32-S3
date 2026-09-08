@@ -82,11 +82,19 @@ const char *bas_class_name(bas_class_t c);
 typedef struct {
     bas_family_t fam;
     uint16_t pps;
+    /* 0 asks for a continuous run: emit until the operator stops it.
+     *
+     * That is not unbounded. The engagement lock is checked before every
+     * frame, so a continuous run ends when the engagement expires -- and the
+     * TTL is capped at four hours. "Until stopped" therefore cannot become
+     * "until the battery dies in a drawer", which is the failure mode a
+     * duration ceiling was really guarding against. */
     uint16_t seconds;
     uint8_t  reason_code;    /* 802.11 reason for deauth/disassoc; 7 default*/
     uint8_t  channel;        /* 0 = follow the target's channel             */
     bool     clamped_pps;    /* set by validate when it lowered the rate    */
     bool     clamped_secs;
+    bool     continuous;     /* runs until stopped or the engagement ends   */
 } bas_plan_t;
 
 /* Fill a plan with the family's defaults. */
@@ -105,9 +113,10 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
                             const bas_engagement_t *e,
                             uint32_t now_ms);
 
-/* Total frames a validated plan will emit. The UI shows this before arming,
- * because "600 frames" is a number an operator can reason about and
- * "20 pps for 30 s" is not. */
+/* Total frames a validated plan will emit, or 0 when it is continuous and
+ * there is no total to give. The UI shows this before arming, because "600
+ * frames" is a number an operator can reason about and "20 pps for 30 s" is
+ * not. */
 uint32_t bas_plan_frame_budget(const bas_plan_t *p);
 
 /* Regulatory clamp. Basanos will not transmit outside the operator's domain

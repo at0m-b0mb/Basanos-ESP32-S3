@@ -47,6 +47,7 @@ typedef enum {
     CMD_PSK,
     CMD_REGION,
     CMD_CELL,
+    CMD_BG,
 } bas_cmd_kind_t;
 
 typedef struct {
@@ -61,6 +62,15 @@ typedef struct {
 
 /* Starts the reader task. Safe to call when no host is attached. */
 void bas_console_start(void);
+
+/* Set the moment "abort" is parsed, in the reader task, without waiting for
+ * the main loop to drain the queue.
+ *
+ * A continuous run never returns to the loop, so a queued abort would sit
+ * behind the very run it is meant to stop. This is the one command that has to
+ * bypass the queue -- an emission with no end must always be stoppable. */
+bool bas_console_abort_requested(void);
+void bas_console_clear_abort(void);
 
 /* Non-blocking. Returns true and fills `out` when a command is waiting. */
 bool bas_console_take(bas_cmd_t *out);

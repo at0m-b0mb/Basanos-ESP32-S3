@@ -45,7 +45,11 @@ print("download mode requested")
 PY
 
 sleep 1
-python -m esptool --chip esp32s3 -p "$PORT" -b 460800 \
+# esptool lives in the IDF virtualenv as `python`, but a plain shell may only
+# have `python3`. Pick whichever exists rather than failing with
+# "python: command not found" and leaving the old image on the board.
+PY_BIN="$(command -v python || command -v python3)"
+"$PY_BIN" -m esptool --chip esp32s3 -p "$PORT" -b 460800 \
     --before no_reset --after hard_reset \
     write_flash --flash_mode dio --flash_freq 80m --flash_size 16MB \
     0x0     build/bootloader/bootloader.bin \

@@ -319,6 +319,15 @@ static volatile bool s_abort;
  * the transmit tick and the scoring screen drain into the same run. */
 static int s_scoring_run = -1;
 
+/* Passive discovery while nothing is running.
+ *
+ * On by default: an instrument that has been sitting on a bench for a minute
+ * should already know what is in the room rather than making the operator ask.
+ * It is receive-only, and it is suspended for the duration of any run because
+ * the transmitter owns the channel then -- a hopping receiver would drag the
+ * radio off the channel mid-burst. */
+static bool s_bg_scan = true;
+
 /* Credit any alarm the detector sent over the UART pads.
  *
  * This is the machine-timed path: the timestamp is the byte arriving, not an
@@ -349,6 +358,15 @@ static bool tx_tick(const bas_tx_result_t *p, void *ctx)
      * that only happens if the alarm is collected during the run. */
     poll_uart_alarms();
     bas_ui_running(c->f, &s_engage, p, c->budget);
+
+    /* A run is interruptible by the glass, by any button, or from the console
+     * -- and the console path has to bypass the command queue, because a
+     * continuous run never returns to the loop that drains it. An emission
+     * with no end must always be stoppable. */
+    if (bas_console_abort_requested()) {
+        bas_console_clear_abort();
+        s_abort = true;
+    }
 
     uint16_t tx, ty;
     if (ui_tap(&tx, &ty))        { s_abort = true; }
@@ -383,7 +401,7 @@ static void console_help(void)
     bas_console_reply("lock <idx> <label>       lock an engagement");
     bas_console_reply("unlock                   drop it");
     bas_console_reply("fams                     families, with index");
-    bas_console_reply("run <fam> [pps] [secs]   emit; disruptive needs CONFIRM");
+    bas_console_reply("run <fam> [pps] [secs|forever]  emit; disruptive needs CONFIRM");
     bas_console_reply("abort                    stop a run");
     bas_console_reply("alarm [name]             record an alarm on the last run");
     bas_console_reply("card                     the scorecard");
@@ -391,6 +409,7 @@ static void console_help(void)
     bas_console_reply("cell [off]               target every client on the network");
     bas_console_reply("region [fcc|etsi|jp]     regulatory channel clamp");
     bas_console_reply("psk [secs] [CONFIRM]     passphrase strength audit");
+    bas_console_reply("bg [off]                 idle passive network discovery");
     bas_console_reply("blescan [off]            passive BLE device scan");
     bas_console_reply("uart [baud|off]          listen for detector alarms");
     bas_console_reply("selftest                 re-run the invariants");
@@ -491,7 +510,8 @@ static void console_run(const bas_cmd_t *c)
     bas_plan_t p;
     bas_plan_default(&p, f);
     if (c->pps  > 0) { p.pps     = (uint16_t)c->pps; }
-    if (c->secs > 0) { p.seconds = (uint16_t)c->secs; }
+    if (c->secs > 0)      { p.seconds = (uint16_t)c->secs; }
+    else if (c->secs < 0) { p.seconds = 0u; }   /* continuous */
 
     uint8_t role = (fs->klass == BAS_CLASS_DISRUPTIVE) ? BAS_ROLE_ADMIN
                                                        : BAS_ROLE_OPERATOR;
@@ -506,9 +526,15 @@ static void console_run(const bas_cmd_t *c)
     }
 
     uint32_t budget = bas_plan_frame_budget(&p);
-    bas_console_reply("running %s: %u frames, %u pps, ch%u", fs->name,
-                      (unsigned)budget, (unsigned)p.pps, (unsigned)p.channel);
-
+    if (p.continuous) {
+        bas_console_reply("running %s: %u pps, ch%u, UNTIL STOPPED",
+                          fs->name, (unsigned)p.pps, (unsigned)p.channel);
+        bas_console_reply("  'abort' stops it; the engagement ends it anyway");
+    } else {
+        bas_console_reply("running %s: %u frames, %u pps, ch%u", fs->name,
+                          (unsigned)budget, (unsigned)p.pps,
+                          (unsigned)p.channel);
+    }
     tx_ctx_t ctx = { .f = f, .budget = budget };
     s_abort = false;
     int idx = bas_card_begin(&s_card, f, now_ms(), BAS_GRACE_DEFAULT_MS);
@@ -709,7 +735,10 @@ static void console_exec(const bas_cmd_t *c)
             break;
         }
 
-        int secs = (c->secs > 0) ? c->secs : 30;
+        /* A handshake needs a client to reconnect, and a client reconnects
+         * when it feels like it. Continuous is the honest default for a
+         * capture that is waiting on someone else's behaviour. */
+        int secs = (c->secs > 0) ? c->secs : ((c->secs < 0) ? 0 : 30);
         if (secs > 120) { secs = 120; }
 
         bool started_rx = !bas_sniff_active();
@@ -920,6 +949,14 @@ static void console_exec(const bas_cmd_t *c)
         }
         break;
 
+    case CMD_BG:
+        s_bg_scan = (c->index != 0);
+        if (!s_bg_scan) { bas_sniff_stop(); }
+        bas_console_reply("background discovery %s",
+                          s_bg_scan ? "on — receive only, hops the band"
+                                    : "off");
+        break;
+
     case CMD_SNIFF:
         if (c->index < 0) {
             bas_sniff_stop();
@@ -1103,7 +1140,8 @@ void app_main(void)
     char label[BAS_LABEL_MAX] = {0};
     /* Whether the label being typed authorises a network or an area. */
     bool label_is_area = false;
-    uint32_t hold_start = 0, ask_until = 0, run_frames = 0;
+    uint32_t hold_start = 0, ask_until = 0, run_frames = 0, bg_merged = 0;
+    int      hold_gap = 0;   /* consecutive not-held samples */
     int  run_idx = -1;
     bas_plan_t plan;
     uint8_t role = BAS_ROLE_OPERATOR;
@@ -1113,6 +1151,21 @@ void app_main(void)
     static char subs[16][40];
 
     while (true) {
+        /* Idle discovery. Suspended during a run, and never while an active
+         * scan owns the radio. */
+        if (s_bg_scan && !bas_sniff_active() && st_cur != ST_CHANNELS) {
+            bas_sniff_start(0);
+        }
+        if (s_bg_scan && bas_sniff_active() && st_cur != ST_CHANNELS) {
+            bas_sniff_hop(900);
+            if ((now_ms() - bg_merged) > 2500u) {
+                bg_merged = now_ms();
+                if (bas_sniff_merge_networks(&s_scan) > 0) {
+                    redraw = true;   /* the counts on screen moved */
+                }
+            }
+        }
+
         bas_cmd_t cmd;
         while (bas_console_take(&cmd)) {
             console_exec(&cmd);
@@ -1327,6 +1380,22 @@ void app_main(void)
             }
             bool ready = (gate == BAS_OK) && bas_tx_supported(f);
 
+            /* RIGHT cycles the duration, ending in "until stopped". A long
+             * soak is a real assessment need -- does the detector still alarm
+             * on minute nine -- and re-arming every thirty seconds to get it
+             * would be worse than letting the run continue under a lock that
+             * is re-checked every frame. */
+            if (next && ready) {
+                uint16_t opts[4] = { 5u, 15u, fs->max_seconds, 0u };
+                int at = 3;
+                for (int i = 0; i < 4; i++) {
+                    if (plan.seconds == opts[i]) { at = i; break; }
+                }
+                plan.seconds = opts[(at + 1) % 4];
+                redraw = true;
+                break;
+            }
+
             /* A disruptive family arms on the PRESS, not on the release.
              *
              * The footer asks for a hold, so the operator holds -- and a hold
@@ -1342,6 +1411,7 @@ void app_main(void)
             if (ready && fs->klass == BAS_CLASS_DISRUPTIVE && input_held_down()) {
                 plan = probe;
                 hold_start = 0;
+                hold_gap   = 0;
                 st_cur = ST_HOLD;
                 redraw = true;
                 break;
@@ -1360,20 +1430,40 @@ void app_main(void)
         case ST_HOLD: {
             const uint32_t HOLD_MS = 1500u;
             uint32_t t = now_ms();
+            /* A mechanical contact bounces, and GPIO 0 doubles as the BOOT
+             * strapping pin, so a single not-held sample mid-hold is noise
+             * rather than intent. Cancelling on the first one made arming work
+             * roughly every other attempt. A real release lasts far longer
+             * than three polls. */
+            const int RELEASE_SAMPLES = 3;
+
             if (input_held_down()) {
+                hold_gap = 0;
                 if (hold_start == 0u) { hold_start = t; }
                 uint32_t h = t - hold_start;
                 bas_ui_hold(cur_fams[atk_sel], &s_engage,
                             (int)(h * 100u / HOLD_MS));
                 if (h >= HOLD_MS) {
+                    hold_gap = 0;
                     role = BAS_ROLE_ADMIN;   /* lasts exactly one run */
                     goto do_run;
                 }
             } else if (hold_start != 0u) {
-                hold_start = 0;
-                st_cur = ST_ATTACK;
-                redraw = true;
+                if (++hold_gap >= RELEASE_SAMPLES) {
+                    hold_start = 0;
+                    hold_gap   = 0;
+                    st_cur = ST_ATTACK;
+                    redraw = true;
+                } else {
+                    /* Hold the bar where it was rather than dropping it: a bar
+                     * that flickers to zero and recovers looks like the gesture
+                     * failed even when it did not. */
+                    uint32_t h = t - hold_start;
+                    bas_ui_hold(cur_fams[atk_sel], &s_engage,
+                                (int)(h * 100u / HOLD_MS));
+                }
             } else {
+                hold_gap = 0;
                 bas_ui_hold(cur_fams[atk_sel], &s_engage, 0);
             }
             /* EV_BACK is deliberately ignored here. It fires from a 600 ms
@@ -1515,7 +1605,14 @@ void app_main(void)
                                    b0, 0, true };
             rows[1] = (bas_row_t){ "Devices", sc || bn ? "what is advertising"
                                                        : "scan first", 0, bn > 0 };
-            rows[2] = (bas_row_t){ "Attacks", b1, 0, s_engage.locked };
+            /* Always reachable. Selecting it without an engagement goes
+             * straight to the authorisation, rather than sitting greyed out
+             * and sending the operator to the Wi-Fi section to lock a network
+             * that Bluetooth does not use. */
+            rows[2] = (bas_row_t){ "Attacks",
+                                   s_engage.locked ? b1
+                                                   : "name the authorisation first",
+                                   0, true };
             /* BLE addresses nobody, so it needs an authorisation but not a
              * network. Making the operator pick a Wi-Fi target in order to
              * authorise a Bluetooth emission was incoherent, and made this
@@ -1547,7 +1644,15 @@ void app_main(void)
                     cur_fams = BLE_FAMS;
                     cur_fam_n = BLE_FAM_N;
                     atk_sel = 0;
-                    st_cur = ST_ATTACKS;
+                    if (!s_engage.locked) {
+                        /* Straight to the keyboard: BLE addresses nobody, so
+                         * a label is the only thing it needs. */
+                        label[0] = '\0';
+                        label_is_area = true;
+                        st_cur = ST_LABEL;
+                    } else {
+                        st_cur = ST_ATTACKS;
+                    }
                     break;
                 case 3:
                     label[0] = '\0';

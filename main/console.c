@@ -17,8 +17,11 @@ static const char *TAG = "bas_con";
 
 static QueueHandle_t s_q;
 static volatile bool s_active;
+static volatile bool s_abort_req;
 
 bool bas_console_active(void) { return s_active; }
+bool bas_console_abort_requested(void) { return s_abort_req; }
+void bas_console_clear_abort(void) { s_abort_req = false; }
 
 void bas_console_reply(const char *fmt, ...)
 {
@@ -95,6 +98,12 @@ static bool parse(char *line, bas_cmd_t *c)
     if (!strcmp(v, "selftest")) { c->kind = CMD_SELFTEST; return true; }
     if (!strcmp(v, "recon"))    { c->kind = CMD_RECON;    return true; }
 
+    if (!strcmp(v, "bg")) {
+        c->kind  = CMD_BG;
+        c->index = (n >= 2 && !strcmp(tok[1], "off")) ? 0 : 1;
+        return true;
+    }
+
     if (!strcmp(v, "cell")) {
         c->kind  = CMD_CELL;
         c->index = (n >= 2 && !strcmp(tok[1], "off")) ? 0 : 1;
@@ -115,7 +124,12 @@ static bool parse(char *line, bas_cmd_t *c)
 
     if (!strcmp(v, "psk")) {
         c->kind  = CMD_PSK;
-        c->secs  = (n >= 2) ? atoi_safe(tok[1]) : 0;
+        if (n >= 2) {
+            c->secs = (!strcmp(tok[1], "forever") || !strcmp(tok[1], "0"))
+                          ? -1 : atoi_safe(tok[1]);
+        } else {
+            c->secs = 0;
+        }
         return true;
     }
 
@@ -174,7 +188,15 @@ static bool parse(char *line, bas_cmd_t *c)
         c->kind  = CMD_RUN;
         c->index = atoi_safe(tok[1]);
         c->pps   = (n >= 3) ? atoi_safe(tok[2]) : 0;
-        c->secs  = (n >= 4) ? atoi_safe(tok[3]) : 0;
+        /* -1 means the operator explicitly asked for continuous; 0 means
+         * they said nothing and the family default applies. Collapsing the
+         * two would make "run 12 10 0" silently take the default. */
+        if (n >= 4) {
+            c->secs = (!strcmp(tok[3], "forever") || !strcmp(tok[3], "0"))
+                          ? -1 : atoi_safe(tok[3]);
+        } else {
+            c->secs = 0;
+        }
         return true;
     }
 
@@ -215,6 +237,12 @@ static void reader(void *arg)
             bas_cmd_t c;
             if (parse(line, &c)) {
                 s_active = true;
+                /* Flagged here, in the reader, so it reaches a run already in
+                 * progress. It is still queued as well, so the main loop can
+                 * acknowledge it when nothing is running. */
+                if (c.kind == CMD_ABORT) {
+                    s_abort_req = true;
+                }
                 if (xQueueSend(s_q, &c, 0) != pdTRUE) {
                     bas_console_reply("busy");
                 }

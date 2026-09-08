@@ -291,6 +291,8 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
      * the UI to say so rather than silently delivering something else. */
     p->clamped_pps  = false;
     p->clamped_secs = false;
+    p->continuous   = false;
+
     if (p->pps == 0u) {
         p->pps = s->default_pps;
     }
@@ -298,10 +300,13 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
         p->pps = s->max_pps;
         p->clamped_pps = true;
     }
+
     if (p->seconds == 0u) {
-        p->seconds = 1u;
-    }
-    if (p->seconds > s->max_seconds) {
+        /* Continuous. The rate ceiling still applies -- what is unbounded is
+         * how long, not how hard -- and the engagement lock, checked before
+         * every frame, is what ends it. */
+        p->continuous = true;
+    } else if (p->seconds > s->max_seconds) {
         p->seconds = s->max_seconds;
         p->clamped_secs = true;
     }
@@ -311,7 +316,9 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
 
 uint32_t bas_plan_frame_budget(const bas_plan_t *p)
 {
-    if (p == NULL) {
+    if (p == NULL || p->continuous) {
+        /* A continuous run has no total, and inventing one would put a
+         * progress bar on a screen that cannot progress. */
         return 0u;
     }
     return (uint32_t)p->pps * (uint32_t)p->seconds;

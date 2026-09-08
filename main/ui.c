@@ -510,9 +510,16 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
 
     /* What will go out, in words, before anything can be committed. */
     bas_text(c, TH_PAD, 76, "WILL EMIT", TH_INK3, 1);
-    snprintf(buf, sizeof(buf), "%u frames over %u s",
-             (unsigned)bas_plan_frame_budget(p), (unsigned)p->seconds);
-    bas_serif_text(c, TH_PAD, 86, buf, TH_INK, 1);
+    if (p->continuous) {
+        /* No total, so no false precision about how much. */
+        bas_serif_text(c, TH_PAD, 86, "until stopped", TH_STOP, 1);
+    } else {
+        snprintf(buf, sizeof(buf), "%u frames over %u s",
+                 (unsigned)bas_plan_frame_budget(p), (unsigned)p->seconds);
+        bas_serif_text(c, TH_PAD, 86, buf, TH_INK, 1);
+    }
+    bas_text(c, W - TH_PAD - bas_text_width("RIGHT: time", 1), 76,
+             "RIGHT: time", TH_BRASS, 1);
 
     snprintf(buf, sizeof(buf), "%u per second on channel %u",
              (unsigned)p->pps,
@@ -640,15 +647,26 @@ void bas_ui_running(bas_family_t f, const bas_engagement_t *e,
     int pw = W - 2 * TH_PAD;
     bas_fill(c, TH_PAD, 150, pw, 12, TH_CARD);
     bas_rect(c, TH_PAD, 150, pw, 12, TH_RULE2);
+
     if (budget > 0u) {
         uint32_t done = p->frames_sent > budget ? budget : p->frames_sent;
         bas_fill(c, TH_PAD + 1, 151, (int)((uint32_t)(pw - 2) * done / budget),
                  10, TH_SHINE);
+        snprintf(buf, sizeof(buf), "of %u    %u.%us elapsed", (unsigned)budget,
+                 (unsigned)(p->elapsed_ms / 1000),
+                 (unsigned)((p->elapsed_ms % 1000) / 100));
+    } else {
+        /* Continuous. A bar that fills toward an end there isn't would be a
+         * lie about progress, so this is a mark that travels: it shows the run
+         * is alive and claims nothing about how far along it is. */
+        int span = pw - 26;
+        if (span < 1) { span = 1; }
+        int x = (int)((p->elapsed_ms / 40u) % (uint32_t)span);
+        bas_fill(c, TH_PAD + 1 + x, 151, 24, 10, TH_SHINE);
+        snprintf(buf, sizeof(buf), "until stopped    %u:%02u elapsed",
+                 (unsigned)(p->elapsed_ms / 60000u),
+                 (unsigned)((p->elapsed_ms / 1000u) % 60u));
     }
-
-    snprintf(buf, sizeof(buf), "of %u    %u.%us elapsed", (unsigned)budget,
-             (unsigned)(p->elapsed_ms / 1000),
-             (unsigned)((p->elapsed_ms % 1000) / 100));
     bas_text(c, TH_PAD, 168, buf, TH_INK3, 1);
 
     if (p->tx_errors > 0u) {

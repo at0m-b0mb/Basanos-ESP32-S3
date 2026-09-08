@@ -16,6 +16,7 @@
 
 #include "basanos/station.h"
 #include "basanos/survey.h"
+#include "basanos/target.h"
 #include "basanos/wpa.h"
 #include "esp_err.h"
 
@@ -50,6 +51,25 @@ uint8_t   bas_sniff_current_channel(void);
 void bas_sniff_hop(uint32_t dwell_ms);
 
 void bas_sniff_reset(void);
+
+/* --- passive discovery -----------------------------------------------------
+
+   Networks assembled from beacons as they arrive, rather than by asking. A
+   blocking scan takes about thirteen seconds and freezes the interface for all
+   of it; the receiver is already hopping the band, so the same information can
+   be had continuously and for free.
+
+   The posture (security, channel, hidden) is parsed once on first sighting.
+   Re-parsing every beacon would cost a full element walk hundreds of times a
+   second for information that does not change.
+   ------------------------------------------------------------------------- */
+
+const bas_scan_t *bas_sniff_networks(void);
+
+/* Merge what the receiver has found into an existing scan list, so a passive
+ * discovery does not discard what an active scan already established. Returns
+ * how many entries were new. */
+int bas_sniff_merge_networks(bas_scan_t *dst);
 
 /* Callback entries before any parsing. Separates "the receiver is not being
  * called" from "the parser is dropping everything". */
