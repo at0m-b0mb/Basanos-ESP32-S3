@@ -69,6 +69,7 @@ A family that grades nothing does not ship.
 | Auth flood | disruptive | Association-table pressure reads as attack, not load |
 | Association flood | disruptive | Association pressure separates from auth-only load |
 | Channel switch | disruptive | A forged channel-switch is scored as an attack, not a move |
+| Passphrase audit | active | Whether the PSK is guessable — tested on-device, then wiped |
 | Evil twin | active | Roaming stays clear while a posture conflict escalates |
 | PMKID solicitation | active | An unauthenticated association draws EAPOL M1 |
 | Beacon set | active | New-BSSID arrival rate scores; a busy room is not a flood |
@@ -207,16 +208,22 @@ None of it transmits.
 These are missing by decision, not oversight. Each would be straightforward to
 build; none would move a number on a scorecard.
 
-**Key material.** The PMKID family solicits EAPOL M1 and records **whether a
-PMKID was offered** — never the value. There is no buffer for it anywhere in
-the firmware and no caller could ask for one. A sensor detects the
-solicitation, not what the tester keeps, so storing sixteen bytes of crackable
-material would add custody and liability without adding a measurement. *"This
-AP hands a PMKID to any unauthenticated device"* is the line that belongs in a
-report.
+**Exported key material.** Both families that touch key material give you the
+finding and keep nothing.
 
-Four-way handshake capture is absent for the original reason: it is genuinely
-passive, so nothing can observe it happening and it exercises no detector.
+The **PMKID** family solicits EAPOL M1 and records *whether a PMKID was
+offered* — never the value. There is no buffer for it anywhere in the firmware.
+
+The **passphrase audit** captures a four-way handshake, tests it against a list
+of weak passphrases **on the device**, reports the verdict, and wipes the
+handshake — asserted by a test that walks the whole structure byte by byte
+after the wipe. Nothing crackable is written to the card, the console or the
+log, and nothing survives the audit.
+
+That is deliberately not a cracker. It cannot recover a strong passphrase and
+does not try. Exhausting the list proves one useful thing — that the passphrase
+was *not* one of the obvious ones — and the report says exactly that rather
+than implying the key is strong.
 
 **HID keystroke timing** is listed but cannot ship on this board. USB HID means
 TinyUSB taking the port, and the USB-Serial/JTAG console — the device's control
@@ -351,6 +358,8 @@ the device halts on that screen rather than showing a target picker.**
 | Engagement log | ✅ CSV to SD; absent card is a missing capability, not a failure |
 | UART alarm listener | ✅ verified by internal loopback, end to end |
 | BLE scanner and tracker detection | ✅ verified — 26 devices, 6 trackers classified |
+| WPA2 crypto | ✅ verified against FIPS 180-2, RFC 2202/6070 and 802.11i H.4 |
+| Passphrase audit | ✅ capture and audit path working; wipe asserted |
 | HID keystroke timing | 🧱 blocked by design — see below |
 
 Transmission is verified independently rather than by trusting a return code:

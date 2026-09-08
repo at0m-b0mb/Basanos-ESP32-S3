@@ -14,6 +14,7 @@ int main(void)
     suite_engage_area();
     suite_family();
     suite_rbac();
+    suite_wpa();
     suite_score();
     suite_station();
     suite_ie();

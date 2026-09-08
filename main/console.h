@@ -44,6 +44,7 @@ typedef enum {
     CMD_RECON,
     CMD_UART,
     CMD_BLESCAN,
+    CMD_PSK,
 } bas_cmd_kind_t;
 
 typedef struct {

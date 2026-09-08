@@ -44,6 +44,7 @@ void suite_engage(void);
 void suite_engage_area(void);
 void suite_family(void);
 void suite_rbac(void);
+void suite_wpa(void);
 void suite_score(void);
 void suite_station(void);
 void suite_ie(void);

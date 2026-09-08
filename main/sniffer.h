@@ -16,6 +16,7 @@
 
 #include "basanos/station.h"
 #include "basanos/survey.h"
+#include "basanos/wpa.h"
 #include "esp_err.h"
 
 /* A network some device in the room asked for by name. This is the client's
@@ -112,6 +113,23 @@ typedef struct {
 void bas_sniff_watch(const uint8_t sta[6], const uint8_t bssid[6]);
 void bas_sniff_watch_stop(void);
 const bas_pmkid_watch_t *bas_sniff_watch_result(void);
+
+/* --- four-way handshake capture -------------------------------------------
+
+   Held in RAM only, for exactly as long as the audit takes. Nothing here is
+   written to the card, the console or the log: the finding is the output, the
+   handshake is not. bas_sniff_handshake_wipe() is called the moment an audit
+   finishes, whatever the verdict.
+   ------------------------------------------------------------------------- */
+
+/* Capture the next handshake seen for this BSSID. `ssid` is needed because it
+ * salts the key derivation, and a capture without it cannot be tested. */
+void bas_sniff_handshake_arm(const uint8_t bssid[6], const char *ssid);
+void bas_sniff_handshake_disarm(void);
+bool bas_sniff_handshake_armed(void);
+
+const bas_handshake_t *bas_sniff_handshake(void);
+void bas_sniff_handshake_wipe(void);
 
 /* Live views. The structures update under the caller's feet, which is fine for
  * drawing a screen and wrong for arithmetic you intend to keep -- copy first

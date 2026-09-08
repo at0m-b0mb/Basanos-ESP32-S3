@@ -95,6 +95,12 @@ static bool parse(char *line, bas_cmd_t *c)
     if (!strcmp(v, "selftest")) { c->kind = CMD_SELFTEST; return true; }
     if (!strcmp(v, "recon"))    { c->kind = CMD_RECON;    return true; }
 
+    if (!strcmp(v, "psk")) {
+        c->kind  = CMD_PSK;
+        c->secs  = (n >= 2) ? atoi_safe(tok[1]) : 0;
+        return true;
+    }
+
     if (!strcmp(v, "blescan")) {
         c->kind  = CMD_BLESCAN;
         c->index = (n >= 2 && !strcmp(tok[1], "off")) ? -1 : 0;

@@ -21,6 +21,10 @@ static volatile uint8_t  s_k_head, s_k_tail;
 static volatile bool     s_karma;
 static volatile uint32_t s_k_answered, s_k_dropped;
 
+static bas_handshake_t   s_hs;
+static uint8_t           s_hs_bssid[6];
+static bool              s_hs_armed;
+
 static bas_pmkid_watch_t s_watch;
 static uint8_t           s_watch_sta[6];
 static uint8_t           s_watch_bssid[6];
@@ -115,6 +119,53 @@ static void note_probe(const uint8_t *ies, size_t len, const uint8_t src[6],
  * Records only that one was present. The value is deliberately never copied
  * anywhere: this function has no out-parameter for it and no caller could ask.
  */
+/* Collect the two halves of the four-way handshake.
+ *
+ * Message 1 carries the authenticator nonce; message 2 carries the supplicant
+ * nonce and a MIC computed over itself. Verifying a candidate passphrase means
+ * recomputing that MIC, so message 2 is kept verbatim with its MIC field
+ * zeroed -- which is the form the computation needs. */
+static void note_handshake(const uint8_t *e, size_t len, const uint8_t *a1,
+                           const uint8_t *a2, bool from_ap)
+{
+    if (!s_hs_armed || len < 99u) {
+        return;
+    }
+    uint16_t info = (uint16_t)((e[5] << 8) | e[6]);
+    bool ack = (info & 0x0080u) != 0u;
+    bool mic = (info & 0x0100u) != 0u;
+    uint8_t ver = (uint8_t)(info & 0x0007u);
+
+    if (ack && !mic && from_ap) {                  /* message 1            */
+        memcpy(s_hs.anonce, &e[17], 32);
+        memcpy(s_hs.ap, a2, 6);
+        memcpy(s_hs.sta, a1, 6);
+        s_hs.key_ver = ver;
+        s_hs.have_m1 = true;
+        return;
+    }
+
+    if (mic && !ack && !from_ap) {                 /* message 2            */
+        /* Only the pair that belongs together: a message 2 answering some
+         * other message 1 would derive a key that never validates and would
+         * report a weak passphrase as strong. */
+        if (!s_hs.have_m1 || memcmp(s_hs.sta, a2, 6) != 0) {
+            return;
+        }
+        size_t flen = 4u + (size_t)((e[2] << 8) | e[3]);
+        if (flen > len || flen > BAS_EAPOL_MAX) {
+            return;
+        }
+        memcpy(s_hs.snonce, &e[17], 32);
+        memcpy(s_hs.mic, &e[81], 16);
+        memcpy(s_hs.m2, e, flen);
+        memset(&s_hs.m2[81], 0, 16);               /* MIC zeroed for the sum */
+        s_hs.m2_len = (uint16_t)flen;
+        s_hs.key_ver = ver;
+        s_hs.have_m2 = true;
+    }
+}
+
 static void note_eapol(const uint8_t *p, size_t len, uint32_t t)
 {
     /* LLC/SNAP then EtherType 0x888E. */
@@ -241,6 +292,20 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
     if (ftype == 2u) {                       /* data */
         bool to_ds   = (h->fc[1] & 0x01u) != 0u;
         bool from_ds = (h->fc[1] & 0x02u) != 0u;
+
+        if (s_hs_armed &&
+            (bas_mac_eq(h->a1, s_hs_bssid) || bas_mac_eq(h->a2, s_hs_bssid) ||
+             bas_mac_eq(h->a3, s_hs_bssid))) {
+            size_t off = sizeof(hdr_t) + ((fsubtype & 0x08u) ? 2u : 0u);
+            static const uint8_t snap[] = { 0xAA, 0xAA, 0x03, 0x00, 0x00,
+                                            0x00, 0x88, 0x8E };
+            if ((size_t)pkt->rx_ctrl.sig_len > off + sizeof(snap) &&
+                memcmp(&pkt->payload[off], snap, sizeof(snap)) == 0) {
+                note_handshake(&pkt->payload[off + sizeof(snap)],
+                               (size_t)pkt->rx_ctrl.sig_len - off - sizeof(snap),
+                               h->a1, h->a2, from_ds);
+            }
+        }
         if (to_ds && !from_ds) {
             /* station -> AP: a2 is the client, a1 the BSSID */
             bas_sta_observe(&s_stations, h->a2, h->a1, rssi, t);
@@ -254,6 +319,30 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 /* --- control -------------------------------------------------------------- */
 
 uint32_t bas_sniff_raw(void) { return s_raw; }
+
+void bas_sniff_handshake_arm(const uint8_t bssid[6], const char *ssid)
+{
+    if (bssid == NULL || ssid == NULL) {
+        return;
+    }
+    bas_wpa_wipe(&s_hs);
+    memcpy(s_hs_bssid, bssid, 6);
+    size_t n = strlen(ssid);
+    if (n > 32u) { n = 32u; }
+    memcpy(s_hs.ssid, ssid, n);
+    s_hs.ssid_len = (uint8_t)n;
+    s_hs_armed = true;
+}
+
+void bas_sniff_handshake_disarm(void) { s_hs_armed = false; }
+bool bas_sniff_handshake_armed(void)  { return s_hs_armed; }
+const bas_handshake_t *bas_sniff_handshake(void) { return &s_hs; }
+
+void bas_sniff_handshake_wipe(void)
+{
+    s_hs_armed = false;
+    bas_wpa_wipe(&s_hs);
+}
 
 void bas_sniff_watch(const uint8_t sta[6], const uint8_t bssid[6])
 {

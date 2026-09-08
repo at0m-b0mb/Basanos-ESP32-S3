@@ -27,6 +27,8 @@ SRC := $(ENGINE)/basanos.c \
        $(ENGINE)/survey.c \
        $(RBAC)/sha256.c \
        $(RBAC)/rbac.c \
+       $(RBAC)/sha1.c \
+       $(RBAC)/wpa.c \
        $(SCORE)/score.c \
        $(SCORE)/alarm.c
 
@@ -35,6 +37,7 @@ TESTS := main.c \
          test_engage.c \
          test_family.c \
          test_rbac.c \
+         test_wpa.c \
          test_score.c \
          test_station.c \
          test_ie.c \
