@@ -16,6 +16,7 @@
 #include "display.h"
 #include "frames.h"
 #include "power.h"
+#include "rawtx.h"
 #include "selftest.h"
 #include "theme.h"
 #include "touch.h"
@@ -86,12 +87,24 @@ static input_ev_t input_poll(void)
 {
     static uint32_t accept_since, pwr_since;
     static bool     accept_was, next_was, pwr_was, accept_fired;
+    /* The device is switched ON by holding this same button, so at the moment
+     * firmware starts polling the operator's finger is usually still on it.
+     * Without this latch the boot sequence sees a long press and obeys it:
+     * the device comes up, reaches the main loop, and switches itself off
+     * again -- opening and immediately closing.
+     *
+     * Power-off is therefore armed only after the button has been seen
+     * released at least once since boot. */
+    static bool     pwr_released_once;
     uint32_t t = now_ms();
 
     bool pwr = held(BOARD_BTN_PWR);
+    if (!pwr) { pwr_released_once = true; }
     if (pwr && !pwr_was) { pwr_since = t; }
     pwr_was = pwr;
-    if (pwr && (t - pwr_since) >= HOLD_OFF_MS) { return EV_POWEROFF; }
+    if (pwr_released_once && pwr && (t - pwr_since) >= HOLD_OFF_MS) {
+        return EV_POWEROFF;
+    }
 
     bool a = held(BOARD_BTN_ACCEPT);
     if (a && !accept_was) { accept_since = t; accept_fired = false; }
@@ -282,8 +295,8 @@ static void console_help(void)
 
 static void console_status(void)
 {
-    bas_console_reply("networks=%u locked=%d", (unsigned)s_scan.count,
-                      (int)s_engage.locked);
+    bas_console_reply("networks=%u locked=%d rawtx=%d", (unsigned)s_scan.count,
+                      (int)s_engage.locked, (int)bas_rawtx_available());
     if (s_engage.locked) {
         char mac[18];
         bas_mac_fmt(s_engage.target.bssid, mac, sizeof(mac));
@@ -867,7 +880,11 @@ void app_main(void)
             } else {
                 bas_ui_hold(cur_fams[atk_sel], &s_engage, 0);
             }
-            if (back) { st_cur = ST_ATTACK; redraw = true; }
+            /* EV_BACK is deliberately ignored here. It fires from a 600 ms
+             * press of the same button the arming hold uses, so honouring it
+             * would eject the operator at 40% every single time -- the bar
+             * filling and resetting with no way to finish. Releasing cancels,
+             * which is the gesture's own natural exit. */
             break;
 
         do_run: {

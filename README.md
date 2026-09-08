@@ -178,6 +178,29 @@ I2C, UART and USB pads. An SPI radio module does not fit, so Sub-GHz, NFC and
 proprietary 2.4 GHz protocols are out of reach on this platform. The UART pads
 leave the door open for a companion radio without changing the engagement model.
 
+### Raw injection
+
+The Wi-Fi library sanity-checks every frame handed to `esp_wifi_80211_tx` and
+refuses deauthentication, disassociation and authentication outright —
+`unsupport frame type: 0c0`, returned as `ESP_ERR_INVALID_ARG`. Without a
+bypass those three families are accepted by the API and silently emit nothing,
+which for this instrument is the worst possible failure: it would score the
+silence against the detector.
+
+`main/rawtx.c` overrides the check. The symbol is strong, so the link is told
+to accept two definitions and take ours. `--wrap` does not work here — the
+library both defines and calls the function inside one object file, so the call
+never crosses a boundary the linker can rewrite.
+
+Because whether the override actually took is a link-time accident, the
+firmware **asks at runtime** and reports the answer in the self-test and in
+`status`. A build where the bypass did not link shows those three families as
+unavailable instead of running them and blaming the detector for the silence.
+
+The bypass widens only what the *radio* will emit. Who may emit, at what, and
+for how long is decided upstream of it — the engagement lock, the role, the
+ceilings and the frame gate are all untouched.
+
 ### Building
 
 ```bash
@@ -240,6 +263,7 @@ the device halts on that screen rather than showing a target picker.**
 | Display, touch, power, survey | ✅ verified on hardware |
 | Wi-Fi transmit | ✅ verified — 436 frames, 0 rejected |
 | Wi-Fi families | ✅ deauth, disassoc, auth flood, evil twin, beacon, probe |
+| Deauth / disassoc / auth flood | ✅ verified — 54 / 54 / 106 frames, 0 rejected |
 | Karma responder | ✅ verified — 8 names answered from live probes |
 | Promiscuous receiver | ✅ verified — 1118 frames in 10 s, 6 clients, 15 probed names |
 | BLE families | ✅ verified — 120 identities spam, 1 persistent for tracker dwell |

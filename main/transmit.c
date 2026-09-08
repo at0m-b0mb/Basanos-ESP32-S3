@@ -2,6 +2,7 @@
 #include "transmit.h"
 #include "board.h"
 #include "frames.h"
+#include "rawtx.h"
 #include "ble.h"
 #include "sniffer.h"
 
@@ -28,7 +29,11 @@ bool bas_tx_supported(bas_family_t f)
     case BAS_FAM_AUTH_FLOOD:
     case BAS_FAM_DISASSOC:
     case BAS_FAM_DEAUTH:
-        return true;
+        /* These three are the subtypes the Wi-Fi library refuses unless the
+         * sanity-check override linked. Reporting them as available in a build
+         * where it did not would produce runs that emit nothing and score the
+         * silence against the detector. */
+        return bas_rawtx_available();
     default:
         return false;
     }
@@ -39,6 +44,10 @@ const char *bas_tx_pending_reason(bas_family_t f)
     switch (f) {
     case BAS_FAM_HID_TIMING:
         return "needs the USB HID stack";
+    case BAS_FAM_AUTH_FLOOD:
+    case BAS_FAM_DISASSOC:
+    case BAS_FAM_DEAUTH:
+        return "raw injection blocked in this build";
     default:
         return "";
     }

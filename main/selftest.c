@@ -10,6 +10,7 @@
 #include "basanos/station.h"
 #include "basanos/survey.h"
 #include "canvas.h"
+#include "rawtx.h"
 #include "theme.h"
 
 #include "esp_log.h"
@@ -168,6 +169,11 @@ void bas_selftest_run(bas_selftest_t *out)
     ck(tc.oob == 0u, "canvas in bounds");
     bas_text(&tc, 60, 1, "off", TH_INK, 1);
     ck(tc.oob > 0u, "canvas counts overflow");
+
+    /* Not an invariant -- a capability. A build without the override is still
+     * correct, it simply cannot run three of the families, and the interface
+     * says so rather than failing them one at a time later. */
+    ESP_LOGI(TAG, "%s", bas_rawtx_status());
 
     ESP_LOGI(TAG, "%d checks, %d failures", r.checks, r.failures);
     if (out != NULL) {
