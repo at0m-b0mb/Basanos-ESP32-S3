@@ -39,6 +39,12 @@ typedef enum {
     BAS_WPS_NONE = 0,     /* not advertised                                 */
     BAS_WPS_LOCKED,       /* present but locked out                         */
     BAS_WPS_PBC_ONLY,     /* push-button only: a window, not a standing door*/
+    /* Enabled and unlocked, but the beacon carries no Config Methods
+     * attribute -- which is the common case, because that attribute usually
+     * appears only in probe responses. Ranked ABOVE push-button on purpose: a
+     * PIN method has not been ruled out, and grading silence as "push-button
+     * only" would rule it out on no evidence. */
+    BAS_WPS_ON_UNKNOWN,
     BAS_WPS_PIN_OPEN,     /* a PIN method, unlocked: online attack applies  */
     BAS_WPS_REGISTRAR,    /* a registrar is active this moment              */
 } bas_wps_risk_t;

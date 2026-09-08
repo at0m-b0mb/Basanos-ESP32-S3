@@ -370,9 +370,11 @@ bas_wps_risk_t bas_wps_grade(const bas_wps_t *w)
     if ((w->config_methods & BAS_WPS_CM_PBC) != 0u) {
         return BAS_WPS_PBC_ONLY;
     }
-    /* Advertised with no method at all: unusual, and not something to grade
-     * as safe on the strength of a field being absent. */
-    return BAS_WPS_PBC_ONLY;
+    /* No Config Methods attribute at all. Most beacons omit it -- it usually
+     * travels in probe responses -- so this is the ordinary case, not an
+     * anomaly. It must not be graded as push-button: that would report a PIN
+     * method as absent when it was simply never advertised. */
+    return BAS_WPS_ON_UNKNOWN;
 }
 
 const char *bas_wps_risk_name(bas_wps_risk_t r)
@@ -380,6 +382,7 @@ const char *bas_wps_risk_name(bas_wps_risk_t r)
     switch (r) {
     case BAS_WPS_LOCKED:    return "WPS locked";
     case BAS_WPS_PBC_ONLY:  return "WPS push-button";
+    case BAS_WPS_ON_UNKNOWN: return "WPS on, methods unknown";
     case BAS_WPS_PIN_OPEN:  return "WPS PIN exposed";
     case BAS_WPS_REGISTRAR: return "WPS registrar ACTIVE";
     default:                return "no WPS";
@@ -393,6 +396,9 @@ const char *bas_wps_advice(bas_wps_risk_t r)
         return "Locked out. Lockouts expire, so disabling WPS is still better.";
     case BAS_WPS_PBC_ONLY:
         return "Push-button only: exposed while someone presses it.";
+    case BAS_WPS_ON_UNKNOWN:
+        return "Enabled and unlocked. The beacon does not say which methods, "
+               "so a PIN method is not ruled out. Probe it to find out.";
     case BAS_WPS_PIN_OPEN:
         return "A PIN method is open. Recoverable; disable WPS.";
     case BAS_WPS_REGISTRAR:

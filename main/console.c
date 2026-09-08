@@ -96,6 +96,7 @@ static bool parse(char *line, bas_cmd_t *c)
     if (!strcmp(v, "abort"))    { c->kind = CMD_ABORT;    return true; }
     if (!strcmp(v, "card"))     { c->kind = CMD_CARD;     return true; }
     if (!strcmp(v, "wps"))      { c->kind = CMD_WPS;      return true; }
+    if (!strcmp(v, "crack"))    { c->kind = CMD_CRACK;    return true; }
     if (!strcmp(v, "selftest")) { c->kind = CMD_SELFTEST; return true; }
     if (!strcmp(v, "recon"))    { c->kind = CMD_RECON;    return true; }
 

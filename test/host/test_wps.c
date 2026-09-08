@@ -70,6 +70,23 @@ void suite_wps(void)
     CHECK(bas_wps_grade(&w) == BAS_WPS_PBC_ONLY);
     CHECK(!bas_wps_vendor_suspect(&w));           /* no vendor string     */
 
+    SUITE("wps: silence about methods is not a claim about methods");
+
+    /* Real beacons overwhelmingly omit Config Methods -- it travels in probe
+     * responses. Grading that silence as push-button would report a PIN
+     * method as absent when it was simply never advertised, and a report
+     * built on it would tell a client they are safer than they are. */
+    static const uint8_t methods_absent[] = {
+        WPS_HDR(0x0E),
+        0x10, 0x57, 0x00, 0x01, 0x00,             /* unlocked             */
+        0x10, 0x44, 0x00, 0x01, 0x02,             /* configured           */
+    };
+    CHECK(bas_wps_parse(methods_absent, sizeof(methods_absent), &w) == BAS_OK);
+    CHECK(w.present);
+    CHECK(w.config_methods == 0u);
+    CHECK(bas_wps_grade(&w) == BAS_WPS_ON_UNKNOWN);
+    CHECK(bas_wps_grade(&w) != BAS_WPS_PBC_ONLY);
+
     SUITE("wps: an open registrar outranks a merely open PIN");
 
     static const uint8_t reg[] = {

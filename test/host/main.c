@@ -23,6 +23,7 @@ int main(void)
     suite_ie();
     suite_wps();
     suite_wpspin();
+    suite_pixie();
     suite_survey();
     suite_alarm();
 
