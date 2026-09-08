@@ -17,6 +17,7 @@
 #include "frames.h"
 #include "power.h"
 #include "rawtx.h"
+#include "sdlog.h"
 #include "selftest.h"
 #include "theme.h"
 #include "touch.h"
@@ -263,7 +264,8 @@ static bool tx_tick(const bas_tx_result_t *p, void *ctx)
  * is the whole point of the restructure: an operator looking for a deauth
  * should never scroll past a BLE family to find it. */
 static const bas_family_t WIFI_FAMS[] = {
-    BAS_FAM_DEAUTH, BAS_FAM_DISASSOC, BAS_FAM_AUTH_FLOOD,
+    BAS_FAM_DEAUTH, BAS_FAM_DISASSOC, BAS_FAM_CSA,
+    BAS_FAM_AUTH_FLOOD, BAS_FAM_ASSOC_FLOOD,
     BAS_FAM_EVIL_TWIN, BAS_FAM_PMKID, BAS_FAM_BEACON, BAS_FAM_KARMA_RESP,
     BAS_FAM_PROBE_REQ,
 };
@@ -295,8 +297,10 @@ static void console_help(void)
 
 static void console_status(void)
 {
-    bas_console_reply("networks=%u locked=%d rawtx=%d", (unsigned)s_scan.count,
-                      (int)s_engage.locked, (int)bas_rawtx_available());
+    bas_console_reply("networks=%u locked=%d rawtx=%d log=%s rows=%u",
+                      (unsigned)s_scan.count, (int)s_engage.locked,
+                      (int)bas_rawtx_available(), bas_sdlog_status(),
+                      (unsigned)bas_sdlog_rows());
     if (s_engage.locked) {
         char mac[18];
         bas_mac_fmt(s_engage.target.bssid, mac, sizeof(mac));
@@ -416,6 +420,17 @@ static void console_run(const bas_cmd_t *c)
                       (unsigned)(t1 - t0));
     bas_console_reply("window uptime_ms %u..%u", (unsigned)t0, (unsigned)t1);
 
+    {
+        char note[64] = "";
+        if (f == BAS_FAM_PMKID) {
+            const bas_pmkid_watch_t *w = bas_sniff_watch_result();
+            snprintf(note, sizeof(note), "%s", w->pmkid_offered
+                ? "PMKID OFFERED"
+                : (w->eapol_m1 ? "M1 no PMKID" : "no M1"));
+        }
+        bas_sdlog_run(&s_engage, f, &p, &res, note);
+    }
+
     if (f == BAS_FAM_PMKID) {
         /* The posture finding, which is the half of this family worth putting
          * in a report. The PMKID itself was never stored. */
@@ -462,11 +477,19 @@ static void console_exec(const bas_cmd_t *c)
         break;
 
     case CMD_LOCK: {
-        if (c->index < 0 || c->index >= (int)s_scan.count) {
+        int idx = c->index;
+        if (idx < 0) {
+            idx = bas_scan_find_ssid(&s_scan, c->ssid);
+            if (idx < 0) {
+                bas_console_reply("no network named '%s' — 'list'", c->ssid);
+                break;
+            }
+        }
+        if (idx >= (int)s_scan.count) {
             bas_console_reply("no such network — 'list'");
             break;
         }
-        bas_err_t rc = bas_engage_lock(&s_engage, &s_scan.ap[c->index], c->text,
+        bas_err_t rc = bas_engage_lock(&s_engage, &s_scan.ap[idx], c->text,
                                        "console", now_ms(), BAS_TTL_DEFAULT_MS);
         if (rc != BAS_OK) {
             bas_console_reply("refused: %s", bas_err_str(rc));
@@ -633,6 +656,11 @@ void app_main(void)
     buttons_init();
     bas_power_init();
     bas_console_start();
+    if (!bas_sdlog_init()) {
+        /* A missing card is a capability that is absent, not a failure. The
+         * engagement still runs and still scores. */
+        ESP_LOGW(TAG, "engagement log unavailable: %s", bas_sdlog_status());
+    }
     (void)bas_touch_init();
     ESP_LOGI(TAG, "touch: %s (0x%02X)",
              bas_touch_present() ? "present" : "absent",
@@ -936,6 +964,7 @@ void app_main(void)
                 if (run_idx >= 0) {
                     bas_card_end(&s_card, run_idx, now_ms(), res.frames_sent);
                 }
+                bas_sdlog_run(&s_engage, f, &plan, &res, NULL);
                 bas_engage_note_run(&s_engage);
                 role = BAS_ROLE_OPERATOR;
 
@@ -978,10 +1007,14 @@ void app_main(void)
             if ((tap || accept) && run_idx >= 0) {
                 bas_card_alarm(&s_card, run_idx, "operator", 0, 0,
                                BAS_SRC_OPERATOR, now_ms());
+                bas_sdlog_verdict(&s_engage, &s_card.r[run_idx], now_ms());
                 st_cur = ST_RESULTS;
             } else if (back || left == 0u) {
                 /* No alarm inside the grace window. The scorecard reads MISSED
                  * only now, never the instant the burst ended. */
+                if (run_idx >= 0) {
+                    bas_sdlog_verdict(&s_engage, &s_card.r[run_idx], now_ms());
+                }
                 st_cur = ST_RESULTS;
             }
             redraw = true;

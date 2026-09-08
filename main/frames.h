@@ -53,6 +53,20 @@ size_t bas_frame_assoc_req(uint8_t *buf, const uint8_t bssid[6],
                            const uint8_t src[6], const char *ssid,
                            uint16_t seq);
 
+/* A beacon carrying a Channel Switch Announcement, spoofed from the target's
+ * own BSSID and name.
+ *
+ * Clients honour a channel switch from the AP they are associated with, so a
+ * handful of these move a whole cell off channel. It is the cheapest denial in
+ * the catalogue by frame count, which is the interesting part: a detector that
+ * scores rate alone will not see it, and that is exactly what this family
+ * exists to find out.
+ *
+ * `mode` 1 tells clients to stop transmitting until the switch happens. */
+size_t bas_frame_csa(uint8_t *buf, const uint8_t bssid[6], const char *ssid,
+                     uint8_t channel, uint8_t new_channel, uint8_t count,
+                     uint16_t seq);
+
 /* Probe response: a beacon addressed to one requester, claiming to be the
  * network they asked for. This is the karma answer.
  *

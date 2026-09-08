@@ -51,6 +51,7 @@ typedef struct {
     int  secs;                     /* 0 = family default                   */
     bool confirm;                  /* the CONFIRM token was present        */
     char text[BAS_LABEL_MAX];      /* label, detector name                 */
+    char ssid[33];                 /* lock target by name; index -1        */
 } bas_cmd_t;
 
 /* Starts the reader task. Safe to call when no host is attached. */

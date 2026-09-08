@@ -62,6 +62,22 @@ static const bas_family_spec_t k_fam[BAS_FAM__COUNT] = {
         .klass = BAS_CLASS_ACTIVE, .needs_target = true, .needs_client = false,
         .default_pps = 1, .max_pps = 4, .max_seconds = 30, .min_role = ROLE_OPERATOR,
     },
+    [BAS_FAM_CSA] = {
+        .name = "Channel switch", .detector = "Aegis watch, Pharos watch",
+        .proves = "A forged channel-switch is scored as an attack, not a move",
+        /* Disruptive and cheap: a handful of frames moves every client off the
+         * channel, so the ceiling is deliberately low. Volume is not what
+         * makes this work, which is exactly why a rate-only detector misses
+         * it -- and why it is worth having as a separate family. */
+        .klass = BAS_CLASS_DISRUPTIVE, .needs_target = true, .needs_client = false,
+        .default_pps = 5, .max_pps = 20, .max_seconds = 20, .min_role = ROLE_ADMIN,
+    },
+    [BAS_FAM_ASSOC_FLOOD] = {
+        .name = "Association flood", .detector = "Aegis, Argus",
+        .proves = "Association-table pressure separates from auth-only load",
+        .klass = BAS_CLASS_DISRUPTIVE, .needs_target = true, .needs_client = false,
+        .default_pps = 20, .max_pps = 100, .max_seconds = 30, .min_role = ROLE_ADMIN,
+    },
     [BAS_FAM_AUTH_FLOOD] = {
         .name = "Auth flood", .detector = "Aegis, Argus",
         .proves = "Association-table pressure is seen as an attack, not load",

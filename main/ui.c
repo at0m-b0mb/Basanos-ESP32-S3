@@ -707,6 +707,12 @@ void bas_ui_tx_failed(bas_family_t f, const bas_tx_result_t *r)
     if (r->frames_refused > 0u) {
         bas_text_clip(c, TH_PAD, 98, bas_err_str(r->stopped_by), TH_WARN, 1,
                       W - 2 * TH_PAD);
+    } else if (r->stopped_by == BAS_ERR_NO_TARGET) {
+        /* A targeting problem, not a radio one. Saying "the radio rejected
+         * them" would send the operator to debug the wrong half. */
+        bas_text(c, TH_PAD, 98, "This family needs the", TH_INK3, 1);
+        bas_text(c, TH_PAD, 110, "network's name, and the", TH_INK3, 1);
+        bas_text(c, TH_PAD, 122, "target is hidden.", TH_INK3, 1);
     } else {
         bas_text(c, TH_PAD, 98, "The radio rejected them.", TH_INK3, 1);
     }

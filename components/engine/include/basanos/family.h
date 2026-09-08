@@ -45,6 +45,8 @@ typedef enum {
                               * was OFFERED, never the PMKID itself         */
 
     /* --- disruptive: denies service to something real ------------------- */
+    BAS_FAM_CSA,             /* spoofed channel-switch: moves clients away  */
+    BAS_FAM_ASSOC_FLOOD,     /* association requests from many identities   */
     BAS_FAM_AUTH_FLOOD,      /* fills the target AP's association table     */
     BAS_FAM_DISASSOC,
     BAS_FAM_DEAUTH,

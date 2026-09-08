@@ -106,8 +106,17 @@ static bool parse(char *line, bas_cmd_t *c)
 
     if (!strcmp(v, "lock")) {
         if (n < 3) { return false; }
-        c->kind  = CMD_LOCK;
-        c->index = atoi_safe(tok[1]);
+        c->kind = CMD_LOCK;
+        /* A scan index is only meaningful within one session -- the list is
+         * re-sorted by signal on every survey, so an index read a minute ago
+         * may now be a different network. A name does not move, so a
+         * non-numeric first token is treated as an SSID. */
+        if (tok[1][0] >= '0' && tok[1][0] <= '9') {
+            c->index = atoi_safe(tok[1]);
+        } else {
+            c->index = -1;
+            strncpy(c->ssid, tok[1], sizeof(c->ssid) - 1u);
+        }
         /* Everything after the index is the label, spaces included. */
         c->text[0] = '\0';
         for (int i = 2; i < n; i++) {

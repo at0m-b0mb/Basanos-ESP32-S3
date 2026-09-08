@@ -67,6 +67,8 @@ A family that grades nothing does not ship.
 | Deauthentication | disruptive | Rate, shape, forgery and aftermath evidence each fire |
 | Disassociation | disruptive | Frame-shape analysis is not narrowly deauth-specific |
 | Auth flood | disruptive | Association-table pressure reads as attack, not load |
+| Association flood | disruptive | Association pressure separates from auth-only load |
+| Channel switch | disruptive | A forged channel-switch is scored as an attack, not a move |
 | Evil twin | active | Roaming stays clear while a posture conflict escalates |
 | PMKID solicitation | active | An unauthenticated association draws EAPOL M1 |
 | Beacon set | active | New-BSSID arrival rate scores; a busy room is not a flood |
@@ -106,6 +108,29 @@ transmitter's failure — the one output this instrument must never produce.
 
 There is deliberately **no letter grade**. One run against one signal is not
 evidence about a detector in general, and an A+ would imply that it was.
+
+### The engagement log
+
+Every emission writes one CSV row to the card: when, under what authorisation,
+by whom, at what, and what came back. The verdict is written as its own row
+once the grace window closes, because the record that something went on air
+must not wait on a detector.
+
+```
+uptime_ms,record,engagement,operator,family,class,ssid,bssid,client,
+channel,pps,seconds,sent,errors,refused,note
+```
+
+This is the artefact that goes in a deliverable — the answer to *"what exactly
+did you do to our network"*, which a client is entitled to ask and a
+professional tool should answer without reconstruction.
+
+It records the authorisation label the operator typed. It never records key
+material: the PMKID family writes whether one was offered, because that is all
+that is kept.
+
+A missing card is a capability that is absent, not a failure. The device still
+runs and still scores.
 
 ### Knowing whether it worked
 
@@ -284,6 +309,8 @@ the device halts on that screen rather than showing a target picker.**
 | Promiscuous receiver | ✅ verified — 1118 frames in 10 s, 6 clients, 15 probed names |
 | BLE families | ✅ verified — 120 identities spam, 1 persistent for tracker dwell |
 | PMKID solicitation | ✅ verified — full auth→assoc→M1 conversation, finding recorded |
+| Channel switch, association flood | ✅ verified — 28 and 99 frames |
+| Engagement log | ✅ CSV to SD; absent card is a missing capability, not a failure |
 | HID keystroke timing | 🧱 blocked by design — see below |
 
 Transmission is verified independently rather than by trusting a return code:
