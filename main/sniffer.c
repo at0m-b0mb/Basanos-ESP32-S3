@@ -16,6 +16,11 @@ static bas_stalist_t    s_stations;
 static bas_probe_t      s_probes[BAS_MAX_PROBES];
 static int              s_probe_n;
 
+static bas_karma_req_t   s_kq[BAS_KARMA_Q];
+static volatile uint8_t  s_k_head, s_k_tail;
+static volatile bool     s_karma;
+static volatile uint32_t s_k_answered, s_k_dropped;
+
 static volatile uint32_t s_raw;   /* callback entries, before any parsing */
 static bool    s_active;
 static bool    s_hopping;
@@ -60,6 +65,19 @@ static void note_probe(const uint8_t *ies, size_t len, const uint8_t src[6],
          * the parser. Either way it does not go in a list that gets drawn. */
         if ((unsigned char)ssid[i] < 0x20u) {
             return;
+        }
+    }
+
+    if (s_karma) {
+        uint8_t next = (uint8_t)((s_k_head + 1u) % BAS_KARMA_Q);
+        if (next == s_k_tail) {
+            /* Full. Drop rather than block the receiver or grow a backlog
+             * that would be answered far too late to be a response. */
+            s_k_dropped++;
+        } else {
+            memcpy(s_kq[s_k_head].ssid, ssid, (size_t)n + 1u);
+            memcpy(s_kq[s_k_head].dst, src, 6);
+            s_k_head = next;
         }
     }
 
@@ -141,9 +159,35 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 
 uint32_t bas_sniff_raw(void) { return s_raw; }
 
+void bas_sniff_karma_arm(bool on)
+{
+    s_karma = on;
+    if (!on) {
+        s_k_head = s_k_tail = 0;
+    }
+}
+
+bool bas_sniff_karma_armed(void) { return s_karma; }
+
+bool bas_sniff_karma_take(bas_karma_req_t *out)
+{
+    if (out == NULL || s_k_tail == s_k_head) {
+        return false;
+    }
+    *out = s_kq[s_k_tail];
+    s_k_tail = (uint8_t)((s_k_tail + 1u) % BAS_KARMA_Q);
+    return true;
+}
+
+uint32_t bas_sniff_karma_answered(void) { return s_k_answered; }
+uint32_t bas_sniff_karma_dropped(void)  { return s_k_dropped; }
+void     bas_sniff_karma_note_answer(void) { s_k_answered++; }
+
 void bas_sniff_reset(void)
 {
     s_raw = 0;
+    s_k_head = s_k_tail = 0;
+    s_k_answered = s_k_dropped = 0;
     bas_fcount_reset(&s_frames, now_ms());
     bas_chan_reset(&s_chan);
     bas_sta_reset(&s_stations);

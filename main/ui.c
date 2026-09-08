@@ -306,7 +306,7 @@ void bas_ui_home(const bas_engagement_t *e, const bas_scan_t *s,
     snprintf(buf, sizeof(buf), "%u", (unsigned)(s ? s->count : 0));
     tile(c, 0, 0, "WI-FI", buf, sel == BAS_HOME_WIFI, true);
 
-    tile(c, 1, 0, "BLUETOOTH", "--", sel == BAS_HOME_BLE, false);
+    tile(c, 1, 0, "BLUETOOTH", "ready", sel == BAS_HOME_BLE, true);
 
     tile(c, 0, 1, "RECON", locked ? "ready" : "scan", sel == BAS_HOME_RECON,
          true);

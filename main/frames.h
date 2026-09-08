@@ -41,6 +41,17 @@ size_t bas_frame_beacon(uint8_t *buf, const uint8_t bssid[6],
 size_t bas_frame_probe_req(uint8_t *buf, const uint8_t src[6],
                            const char *ssid, uint8_t channel, uint16_t seq);
 
+/* Probe response: a beacon addressed to one requester, claiming to be the
+ * network they asked for. This is the karma answer.
+ *
+ * Like the twin builder it carries a name that is not ours, and for the same
+ * narrow reason: the name came out of the air, from a device that announced it
+ * unprompted. transmit.c takes it from the receiver's queue and nowhere else,
+ * so the device can only echo names actually requested in the room. */
+size_t bas_frame_probe_resp(uint8_t *buf, const uint8_t dst[6],
+                            const uint8_t bssid[6], const char *ssid,
+                            uint8_t channel, uint16_t seq);
+
 /* Evil twin: a beacon carrying an arbitrary SSID from a synthetic BSSID.
  *
  * This is the ONLY builder that will put a name on air without the BASANOS-

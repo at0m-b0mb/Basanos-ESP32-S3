@@ -22,3 +22,16 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# --- Bluetooth LE ---------------------------------------------------------
+# NimBLE rather than Bluedroid: a fraction of the footprint for a device that
+# only advertises. Wi-Fi and BLE share one radio here, so software coexistence
+# arbitrates between them.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y

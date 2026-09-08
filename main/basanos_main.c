@@ -10,6 +10,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
+#include "ble.h"
 #include "board.h"
 #include "console.h"
 #include "display.h"
@@ -620,8 +621,13 @@ void app_main(void)
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
     state_t  st_cur = ST_HOME;
-    int  home_sel = 0, wifi_sel = 0, net_sel = 0, atk_sel = 0, ble_sel = 0;
+    int  home_sel = 0, wifi_sel = 0, net_sel = 0, atk_sel = 0;
     int  recon_sel = 0, cli_sel = 0, probe_sel = 0;
+    /* Whichever section's list is open. The detail, hold and run screens are
+     * identical for Wi-Fi and BLE, so they follow this rather than each
+     * knowing which section they came from. */
+    const bas_family_t *cur_fams = WIFI_FAMS;
+    int cur_fam_n = WIFI_FAM_N;
     bas_stalist_t clients;
     bas_sta_reset(&clients);
     char label[BAS_LABEL_MAX] = {0};
@@ -681,7 +687,7 @@ void app_main(void)
             if (accept) {
                 switch (home_sel) {
                 case BAS_HOME_WIFI:    st_cur = ST_WIFI;    wifi_sel = 0; break;
-                case BAS_HOME_BLE:     st_cur = ST_BLE;     ble_sel  = 0; break;
+                case BAS_HOME_BLE:     st_cur = ST_BLE;                  break;
                 case BAS_HOME_RECON:   st_cur = ST_RECON;                 break;
                 case BAS_HOME_RESULTS: st_cur = ST_RESULTS;               break;
                 default: break;
@@ -717,7 +723,10 @@ void app_main(void)
                 switch (wifi_sel) {
                 case 0: survey(); break;
                 case 1: st_cur = ST_NETWORKS; net_sel = 0; break;
-                case 2: st_cur = ST_ATTACKS;  atk_sel = 0; break;
+                case 2:
+                    cur_fams = WIFI_FAMS; cur_fam_n = WIFI_FAM_N;
+                    st_cur = ST_ATTACKS; atk_sel = 0;
+                    break;
                 case 3: bas_engage_clear(&s_engage); break;
                 default: break;
                 }
@@ -787,15 +796,19 @@ void app_main(void)
         }
 
         case ST_ATTACKS: {
-            int n = build_attacks(WIFI_FAMS, WIFI_FAM_N, rows, subs);
+            int n = build_attacks(cur_fams, cur_fam_n, rows, subs);
             if (redraw) {
-                bas_ui_list("Wi-Fi attacks",
+                bas_ui_list(cur_fams == WIFI_FAMS ? "Wi-Fi attacks" : "Bluetooth",
                             s_engage.target.hidden ? "(hidden)"
                                                    : s_engage.target.ssid,
                             rows, n, atk_sel, "LEFT open   hold LEFT back");
                 redraw = false;
             }
-            if (back) { st_cur = ST_WIFI; redraw = true; break; }
+            if (back) {
+                st_cur = (cur_fams == WIFI_FAMS) ? ST_WIFI : ST_HOME;
+                redraw = true;
+                break;
+            }
             if (next) { atk_sel = (atk_sel + 1) % n; redraw = true; }
             int hit = tap ? bas_ui_list_hit(tx, ty, atk_sel, n) : -1;
             if (hit >= 0) {
@@ -803,7 +816,7 @@ void app_main(void)
                 else { atk_sel = hit; redraw = true; }
             }
             if (accept) {
-                bas_plan_default(&plan, WIFI_FAMS[atk_sel]);
+                bas_plan_default(&plan, cur_fams[atk_sel]);
                 st_cur = ST_ATTACK;
                 redraw = true;
             }
@@ -811,7 +824,7 @@ void app_main(void)
         }
 
         case ST_ATTACK: {
-            bas_family_t f = WIFI_FAMS[atk_sel];
+            bas_family_t f = cur_fams[atk_sel];
             const bas_family_spec_t *fs = bas_family(f);
             bas_plan_t probe = plan;
             bas_err_t gate = bas_plan_validate(&probe, BAS_ROLE_ADMIN,
@@ -841,7 +854,7 @@ void app_main(void)
             if (input_held_down()) {
                 if (hold_start == 0u) { hold_start = t; }
                 uint32_t h = t - hold_start;
-                bas_ui_hold(WIFI_FAMS[atk_sel], &s_engage,
+                bas_ui_hold(cur_fams[atk_sel], &s_engage,
                             (int)(h * 100u / HOLD_MS));
                 if (h >= HOLD_MS) {
                     role = BAS_ROLE_ADMIN;   /* lasts exactly one run */
@@ -852,13 +865,13 @@ void app_main(void)
                 st_cur = ST_ATTACK;
                 redraw = true;
             } else {
-                bas_ui_hold(WIFI_FAMS[atk_sel], &s_engage, 0);
+                bas_ui_hold(cur_fams[atk_sel], &s_engage, 0);
             }
             if (back) { st_cur = ST_ATTACK; redraw = true; }
             break;
 
         do_run: {
-                bas_family_t f = WIFI_FAMS[atk_sel];
+                bas_family_t f = cur_fams[atk_sel];
                 bool aborted = false;
                 for (int left = 3; left > 0 && !aborted; left--) {
                     bas_ui_arm(f, &s_engage, left);
@@ -930,7 +943,7 @@ void app_main(void)
         case ST_ASK: {
             uint32_t t = now_ms();
             uint32_t left = (t < ask_until) ? ask_until - t : 0u;
-            bas_ui_ask(WIFI_FAMS[atk_sel], run_frames, left);
+            bas_ui_ask(cur_fams[atk_sel], run_frames, left);
             if ((tap || accept) && run_idx >= 0) {
                 bas_card_alarm(&s_card, run_idx, "operator", 0, 0,
                                BAS_SRC_OPERATOR, now_ms());
@@ -949,17 +962,24 @@ void app_main(void)
             if (tap || accept || back) { st_cur = ST_HOME; redraw = true; }
             break;
 
-        case ST_BLE: {
-            int n = build_attacks(BLE_FAMS, BLE_FAM_N, rows, subs);
-            if (redraw) {
-                bas_ui_list("Bluetooth", "no radio yet", rows, n, ble_sel,
-                            "hold LEFT back");
-                redraw = false;
+        case ST_BLE:
+            /* Both BLE families still need a locked engagement. They target
+             * nobody, but "nothing transmits without an engagement" is the
+             * invariant the whole device rests on and it does not get an
+             * exception for being harmless. */
+            if (!s_engage.locked) {
+                bas_ui_note("NO ENGAGEMENT", "Lock a target first.",
+                            "Wi-Fi, then choose a network.", TH_WARN);
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                st_cur = ST_HOME;
+            } else {
+                cur_fams = BLE_FAMS;
+                cur_fam_n = BLE_FAM_N;
+                atk_sel = 0;
+                st_cur = ST_ATTACKS;
             }
-            if (next) { ble_sel = (ble_sel + 1) % n; redraw = true; }
-            if (back || accept) { st_cur = ST_HOME; redraw = true; }
+            redraw = true;
             break;
-        }
 
         case ST_RECON: {
             bool on = bas_sniff_active();

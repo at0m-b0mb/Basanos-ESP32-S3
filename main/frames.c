@@ -213,3 +213,41 @@ size_t bas_frame_twin(uint8_t *buf, const uint8_t bssid[6],
 
     return n;
 }
+
+size_t bas_frame_probe_resp(uint8_t *buf, const uint8_t dst[6],
+                            const uint8_t bssid[6], const char *ssid,
+                            uint8_t channel, uint16_t seq)
+{
+    if (buf == NULL || dst == NULL || bssid == NULL || ssid == NULL) {
+        return 0;
+    }
+    /* A response addressed to everybody is a beacon, not an answer, and the
+     * karma family is defined by answering one asker at a time. */
+    if (bas_mac_is_broadcast(dst) || bas_mac_is_zero(dst)) {
+        return 0;
+    }
+    size_t sl = strlen(ssid);
+    if (sl == 0u || sl > 32u) {
+        return 0;
+    }
+
+    size_t n = mgmt_hdr(buf, 5, dst, bssid, bssid, seq);
+
+    memset(&buf[n], 0, 8);               /* timestamp                     */
+    n += 8;
+    buf[n++] = 0x64; buf[n++] = 0x00;    /* beacon interval               */
+    buf[n++] = 0x01; buf[n++] = 0x00;    /* ESS, no privacy               */
+
+    buf[n++] = 0x00;
+    buf[n++] = (uint8_t)sl;
+    memcpy(&buf[n], ssid, sl);
+    n += sl;
+
+    n = add_rates(buf, n);
+
+    buf[n++] = 0x03;
+    buf[n++] = 0x01;
+    buf[n++] = channel;
+
+    return n;
+}

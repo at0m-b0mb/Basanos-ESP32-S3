@@ -71,6 +71,9 @@ A family that grades nothing does not ship.
 | Beacon set | active | New-BSSID arrival rate scores; a busy room is not a flood |
 | Karma responder | active | The gap between names a radio answers and announces |
 | Probe requests | benign | Client tracking survives MAC randomisation |
+| Channel analyser | passive | Occupancy per channel, and refuses to name one it never listened to |
+| Client enumeration | passive | Stations attributed to cells, randomised addresses flagged |
+| Probe log | passive | The names nearby devices ask for — their own history, leaking |
 | BLE advertisements | benign | Advertiser multiplicity and channel-balance scoring |
 | BLE tracker dwell | benign | Dwell-span separates a follower from fixed furniture |
 | HID keystroke timing | benign | Injection-timing detection reacts, and how fast |
@@ -237,9 +240,15 @@ the device halts on that screen rather than showing a target picker.**
 | Display, touch, power, survey | ✅ verified on hardware |
 | Wi-Fi transmit | ✅ verified — 436 frames, 0 rejected |
 | Wi-Fi families | ✅ deauth, disassoc, auth flood, evil twin, beacon, probe |
-| Karma responder | 🧱 needs the promiscuous receiver |
-| BLE families | 🧱 shown as unavailable in the interface, radio not yet wired |
+| Karma responder | ✅ verified — 8 names answered from live probes |
+| Promiscuous receiver | ✅ verified — 1118 frames in 10 s, 6 clients, 15 probed names |
+| BLE families | ✅ verified — 120 identities spam, 1 persistent for tracker dwell |
 | PMKID solicitation | 🧱 next — emits the request, records whether a PMKID was *offered*, never stores one |
+
+Transmission is verified independently rather than by trusting a return code:
+a separate machine's Wi-Fi scanner picks the synthetic networks out of the air
+while the device is beaconing. `ESP_OK` from the radio means the stack accepted
+a frame, not that anything radiated, and those are different claims.
 
 ---
 

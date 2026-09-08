@@ -54,6 +54,35 @@ void bas_sniff_reset(void);
  * called" from "the parser is dropping everything". */
 uint32_t bas_sniff_raw(void);
 
+/* --- karma ----------------------------------------------------------------
+
+   While armed, every named probe request is queued for one answer. The queue
+   is small and drops rather than grows: a busy room can out-produce the
+   transmitter, and a backlog answered thirty seconds late is not a karma
+   response, it is noise.
+   ------------------------------------------------------------------------- */
+
+#define BAS_KARMA_Q 8
+
+typedef struct {
+    char    ssid[33];
+    uint8_t dst[6];
+} bas_karma_req_t;
+
+void bas_sniff_karma_arm(bool on);
+bool bas_sniff_karma_armed(void);
+
+/* Pops one pending request. False when there is nothing to answer. */
+bool bas_sniff_karma_take(bas_karma_req_t *out);
+
+/* How many names have been answered, and how many were dropped because the
+ * queue was full. Both go in the report: a detector's karma logic is scored on
+ * the gap between names answered and names announced, so the count of answers
+ * is the measurement. */
+uint32_t bas_sniff_karma_answered(void);
+uint32_t bas_sniff_karma_dropped(void);
+void     bas_sniff_karma_note_answer(void);
+
 /* Live views. The structures update under the caller's feet, which is fine for
  * drawing a screen and wrong for arithmetic you intend to keep -- copy first
  * if a number has to stay still. */
