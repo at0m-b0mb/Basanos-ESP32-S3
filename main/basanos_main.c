@@ -1437,6 +1437,8 @@ void app_main(void)
     int  home_sel = 0, wifi_sel = 0, net_sel = 0, atk_sel = 0;
     int  recon_sel = 0, cli_sel = 0, probe_sel = 0, ble_sel = 0, bdev_sel = 0;
     int  wps_sel = 0;
+    /* Which menu launched a recovery, so dismissing it returns there. */
+    bool wps_from_wifi = false;
     /* Whichever section's list is open. The detail, hold and run screens are
      * identical for Wi-Fi and BLE, so they follow this rather than each
      * knowing which section they came from. */
@@ -1536,17 +1538,26 @@ void app_main(void)
             rows[2] = (bas_row_t){ "Attacks", locked ? "signal families"
                                                      : "lock a target first",
                                    0, locked };
-            rows[3] = (bas_row_t){ "Release target", locked ? s_engage.label
+            /* Recovery lives here as well as under Recon. The survey is
+             * reconnaissance and belongs there; taking the PIN and the key is
+             * an attack, and this is where an operator looks for one. */
+            rows[3] = (bas_row_t){ "WPS PIN recovery",
+                                   locked ? (s_engage.target.wps.present
+                                                ? "Pixie Dust, then defaults"
+                                                : "target announces no WPS")
+                                          : "lock a target first",
+                                   locked ? TH_STOP : 0, locked };
+            rows[4] = (bas_row_t){ "Release target", locked ? s_engage.label
                                                             : "nothing locked",
                                    0, locked };
             if (redraw) {
-                bas_ui_list("Wi-Fi", NULL, rows, 4, wifi_sel,
+                bas_ui_list("Wi-Fi", NULL, rows, 5, wifi_sel,
                             "LEFT open   hold LEFT back");
                 redraw = false;
             }
-            if (next) { wifi_sel = (wifi_sel + 1) % 4; redraw = true; }
+            if (next) { wifi_sel = (wifi_sel + 1) % 5; redraw = true; }
             if (back) { st_cur = ST_HOME; redraw = true; break; }
-            int hit = tap ? bas_ui_list_hit(tx, ty, wifi_sel, 4) : -1;
+            int hit = tap ? bas_ui_list_hit(tx, ty, wifi_sel, 5) : -1;
             if (hit >= 0) {
                 if (hit == wifi_sel) { accept = true; }
                 else { wifi_sel = hit; redraw = true; }
@@ -1559,7 +1570,8 @@ void app_main(void)
                     cur_fams = WIFI_FAMS; cur_fam_n = WIFI_FAM_N;
                     st_cur = ST_ATTACKS; atk_sel = 0;
                     break;
-                case 3: bas_engage_clear(&s_engage); break;
+                case 3: wps_from_wifi = true; st_cur = ST_WPS_RUN; break;
+                case 4: bas_engage_clear(&s_engage); break;
                 default: break;
                 }
                 redraw = true;
@@ -2111,6 +2123,7 @@ void app_main(void)
                     vTaskDelay(pdMS_TO_TICKS(1800));
                     redraw = true;
                 } else {
+                    wps_from_wifi = false;
                     st_cur = ST_WPS_RUN;
                     redraw = true;
                 }
@@ -2168,7 +2181,10 @@ void app_main(void)
             }
             /* Stay put until dismissed: a recovered key must not vanish while
              * the operator is reaching for a notebook. */
-            if (back || accept || tap) { st_cur = ST_WPS; redraw = true; }
+            if (back || accept || tap) {
+                st_cur = wps_from_wifi ? ST_WIFI : ST_WPS;
+                redraw = true;
+            }
             break;
         }
 
