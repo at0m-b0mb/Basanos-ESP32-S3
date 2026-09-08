@@ -25,6 +25,10 @@ typedef enum {
 
 const char *bas_gesture_name(bas_gesture_t g);
 
+/* True once per double tap reported by the controller, then cleared. This is
+ * the way back from a screen whose hold gesture has taken the only button. */
+bool bas_touch_double(void);
+
 typedef struct {
     bool          down;
     uint16_t      x;

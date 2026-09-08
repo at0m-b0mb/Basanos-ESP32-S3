@@ -565,7 +565,7 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
         }
         bas_text_clip(c, TH_PAD, 190, e->label, TH_BRASS, 1, W - 2 * TH_PAD);
         foot(c, s->klass == BAS_CLASS_DISRUPTIVE
-                    ? "hold LEFT arms   swipe back"
+                    ? "hold LEFT arms   hold RIGHT back"
                     : "LEFT to arm");
     }
     bas_display_flush();

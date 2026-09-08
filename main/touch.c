@@ -32,6 +32,12 @@ static uint8_t  s_chip_id;
 static bool     s_prev_down;
 static bool     s_last_down;
 static bas_gesture_t s_pending_swipe;
+/* The controller reports a double tap itself, so it is latched here
+ * rather than reconstructed from two taps and a timer. A hand-rolled
+ * version would have to guess an interval, and guessing short makes
+ * the gesture unreachable while guessing long makes every deliberate
+ * second tap into one. */
+static bool s_pending_double;
 
 const char *bas_gesture_name(bas_gesture_t g)
 {
@@ -175,6 +181,9 @@ bool bas_touch_read(bas_touch_t *out)
     if (out->gesture >= BAS_GESTURE_UP && out->gesture <= BAS_GESTURE_RIGHT) {
         s_pending_swipe = out->gesture;
     }
+    if (out->gesture == BAS_GESTURE_DOUBLE) {
+        s_pending_double = true;
+    }
 
     s_prev_down = s_last_down;
     s_last_down = out->down;
@@ -200,6 +209,13 @@ bool bas_touch_tapped(uint16_t *x, uint16_t *y)
         if (y != NULL) { *y = t.y; }
     }
     return edge;
+}
+
+bool bas_touch_double(void)
+{
+    bool d = s_pending_double;
+    s_pending_double = false;
+    return d;
 }
 
 bas_gesture_t bas_touch_swipe(void)

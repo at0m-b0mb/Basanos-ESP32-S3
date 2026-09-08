@@ -1439,6 +1439,9 @@ void app_main(void)
     int  wps_sel = 0;
     /* Which menu launched a recovery, so dismissing it returns there. */
     bool wps_from_wifi = false;
+    /* When the glass was first touched on an arming screen, so a
+     * passing contact is not mistaken for the start of an arm. */
+    uint32_t touch_arm_since = 0;
     /* Whichever section's list is open. The detail, hold and run screens are
      * identical for Wi-Fi and BLE, so they follow this rather than each
      * knowing which section they came from. */
@@ -1501,45 +1504,59 @@ void app_main(void)
             continue;
         }
 
-        /* Swipes, and why they are not a convenience.
+        /* Getting out of an arming screen.
          *
-         * BACK is a 600 ms hold of the left button. On a disruptive family's
-         * detail screen that same hold is the arming gesture, and arming wins
-         * because it fires on the press -- so on exactly the screens where an
-         * operator most wants out (deauth, opened by accident) there was no
-         * way back at all. Three buttons cannot express both.
+         * BACK is a 600 ms hold of the left button. On a disruptive family
+         * that same hold is the arming gesture and it fires on the press, so
+         * BACK can never reach its threshold -- opening deauth by accident
+         * meant arming it or pulling the power.
          *
-         * So the glass carries the escape, the way a phone does: swipe right
-         * to go back one level, swipe up to return home. These are checked
-         * before anything else consumes the input. */
-        bas_gesture_t sw = bas_touch_swipe();
+         * Swipes were tried and were wrong: input_held_down() is true for any
+         * contact, so the first moment of a swipe already looked like the
+         * start of an arming hold and the gauge flashed up before the gesture
+         * was recognised. The two cannot share the glass.
+         *
+         * A double tap can. The controller reports it as its own event, it is
+         * two brief contacts rather than a sustained one, and the arming path
+         * below now ignores contacts shorter than a deliberate hold -- so a
+         * double tap cannot start an arm, and an arm cannot be mistaken for a
+         * double tap. */
+        bool dbl = bas_touch_present() && bas_touch_double();
 
-        /* Either direction on each axis, deliberately.
+        /* A second escape that needs no touch panel at all.
          *
-         * The controller's datasheet numbers slide-down as 0x01 and slide-up
-         * as 0x02, which is the inverse of the header's names, and CST816
-         * variants ship with different firmware. Betting on one polarity and
-         * losing would leave the operator trapped on exactly the screen this
-         * exists to escape. Nothing else uses swipes, so both directions on an
-         * axis mean the same thing and the escape cannot be wrong. */
-        bool swipe_back = (sw == BAS_GESTURE_RIGHT || sw == BAS_GESTURE_LEFT);
-        bool swipe_home = (sw == BAS_GESTURE_UP    || sw == BAS_GESTURE_DOWN);
+         * Holding RIGHT is unused everywhere -- a tap on it changes the
+         * selection, and nothing listens for the hold -- so it is free to mean
+         * "back" universally. It cannot collide with arming, which is the LEFT
+         * button. If the glass is unreliable or the operator is wearing
+         * gloves, this still works. */
+        static uint32_t next_since;
+        static bool     next_fired;
+        bool right_back = false;
+        if (held(BOARD_BTN_NEXT)) {
+            if (next_since == 0u) {
+                next_since = now_ms();
+            } else if (!next_fired && now_ms() - next_since >= 600u) {
+                /* Latched on a flag, not by pushing the timestamp into the
+                 * future: one long hold is one back, and the flag clears only
+                 * when the button is actually let go. */
+                right_back = true;
+                next_fired = true;
+            }
+        } else {
+            next_since = 0;
+            next_fired = false;
+        }
 
-        /* A swipe also lands as a finger-down, which would otherwise read as a
-         * tap and activate whatever row it crossed. */
-        if (sw != BAS_GESTURE_NONE) {
+        /* The taps that make up a double tap must not also activate the row
+         * they landed on. */
+        if (dbl) {
             tap = false;
         }
 
-        if (swipe_home && st_cur != ST_HOME) {
-            st_cur = ST_HOME;
-            redraw = true;
-            continue;
-        }
-
         bool accept = (ev == EV_ACCEPT);
-        bool back   = (ev == EV_BACK) || swipe_back;
-        bool next   = (ev == EV_NEXT);
+        bool back   = (ev == EV_BACK) || dbl || right_back;
+        bool next   = (ev == EV_NEXT) && !right_back;
 
         switch (st_cur) {
 
@@ -1764,10 +1781,37 @@ void app_main(void)
              * BACK cannot fire here because the transition happens well inside
              * its 600 ms threshold. */
             /* Before arming, not after: this is the screen the escape exists
-             * for, and a swipe must beat the hold that would otherwise arm. */
-            if (back) { st_cur = ST_ATTACKS; redraw = true; break; }
+             * for, and it must beat the hold that would otherwise swallow it. */
+            if (back) {
+                touch_arm_since = 0;
+                st_cur = ST_ATTACKS;
+                redraw = true;
+                break;
+            }
 
-            if (ready && fs->klass == BAS_CLASS_DISRUPTIVE && input_held_down()) {
+            /* A finger has to REST here, not merely land.
+             *
+             * Entering the arming screen on first contact is what made the
+             * gauge flash up during any other gesture. The button keeps its
+             * immediate behaviour -- pressing it is already deliberate and it
+             * does nothing else on this screen -- but the glass has to be held
+             * past the point where a tap could still be a tap. */
+            bool arm_now = false;
+            if (ready && fs->klass == BAS_CLASS_DISRUPTIVE) {
+                if (held(BOARD_BTN_ACCEPT)) {
+                    arm_now = true;
+                } else if (input_held_down()) {
+                    if (touch_arm_since == 0u) {
+                        touch_arm_since = now_ms();
+                    } else if (now_ms() - touch_arm_since >= 350u) {
+                        arm_now = true;
+                    }
+                } else {
+                    touch_arm_since = 0;
+                }
+            }
+            if (arm_now) {
+                touch_arm_since = 0;
                 plan = probe;
                 hold_start = 0;
                 hold_gap   = 0;
