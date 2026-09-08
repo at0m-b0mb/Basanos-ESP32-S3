@@ -36,7 +36,25 @@ void bas_hline(bas_canvas_t *c, int x, int y, int w, int colour);
 /* Text. Scale 1 gives 5x7 glyphs on a 6px pitch; scale 2 doubles both. */
 void bas_text(bas_canvas_t *c, int x, int y, const char *s,
               uint16_t colour, int scale);
+
+/* The same, emboldened by overprinting one pixel to the right. A second font
+ * table would cost 1.5 KB of glyph data to do what a one-pixel smear does
+ * convincingly at these sizes, and headings are the only place it is used. */
+void bas_text_b(bas_canvas_t *c, int x, int y, const char *s,
+                uint16_t colour, int scale);
 int  bas_text_width(const char *s, int scale);
+
+/* --- serif display face ---------------------------------------------------
+
+   Proportional, 17 px, for titles, the wordmark and figures. Never for list
+   rows: it is roughly twice the width of the 5x7 per character, and density is
+   what a list needs.
+   ------------------------------------------------------------------------- */
+
+void bas_serif_text(bas_canvas_t *c, int x, int y, const char *s,
+                    uint16_t colour, int scale);
+int  bas_serif_width(const char *s, int scale);
+int  bas_serif_height(int scale);
 
 /* Draw `s` truncated with a trailing ellipsis so it fits `max_w` pixels.
  * Returns the width actually drawn. Long SSIDs are the reason this exists. */

@@ -17,6 +17,7 @@
 #include "basanos/station.h"
 #include "basanos/target.h"
 #include "selftest.h"
+#include "sniffer.h"
 #include "transmit.h"
 
 /* --- chrome --------------------------------------------------------------- */
@@ -82,6 +83,23 @@ void bas_ui_results(const bas_card_t *c, uint32_t now_ms);
 
 void bas_ui_note(const char *title, const char *l1, const char *l2,
                  uint16_t accent);
+
+/* --- recon ---------------------------------------------------------------- */
+
+/* Occupancy across the band, as a bar per channel. The channel currently being
+ * listened to is marked, because a tall bar on a channel nobody dwelt on means
+ * nothing. */
+void bas_ui_channels(const bas_chansurvey_t *ch, uint8_t current);
+
+/* What is on air, by frame type, with the rate. */
+void bas_ui_frames(const bas_fcount_t *f, uint8_t channel);
+
+/* Clients seen, for narrowing an engagement to one device. */
+void bas_ui_clients(const bas_stalist_t *l, int sel);
+
+/* Networks devices in the room are asking for by name -- their own history,
+ * leaking. */
+void bas_ui_probes(const bas_probe_t *p, int n, int sel);
 
 /* Live touch check, kept from bring-up: a crosshair where the glass is
  * pressed, so a wrong axis mapping is one press to spot. */

@@ -1,53 +1,65 @@
 /* Basanos — design tokens.
  *
- * Warm paper and gold. Light by default, because this is an instrument used in
- * daylight in an office, not a novelty. The palette is declared once here and
- * every screen draws from it; no screen picks a colour of its own.
+ * White and gold. Cool neutrals, pure white ground, one gold accent used
+ * sparingly. Light by default: this is an instrument read in daylight in an
+ * office, not a novelty.
  *
- * Two golds, not one. A single gold cannot be a fill behind white text AND a
- * bright mark AND small type on paper. BRASS is the deep one that stays
+ * Two golds, not one. A single gold cannot be a fill behind pale text AND a
+ * bright mark AND small type on white. BRASS is the deep one that stays
  * readable at caption size; SHINE is reserved for marks that carry no words.
+ * Semantic colours are a separate set and are never used as the accent.
  *
- * RGB565. The hex beside each token is the sRGB it was derived from, so the
- * palette can be checked against the same values used elsewhere.
+ * --- BYTE ORDER, and why every value below goes through TH_C() -------------
+ *
+ * The ESP32 is little-endian, so a uint16_t 0xF79D sits in memory as 9D F7.
+ * esp_lcd clocks those bytes out in address order and the ST7789 reads the
+ * first byte as the high half, so the panel receives 0x9DF7 -- a completely
+ * different colour. Warm paper arrives as blue-teal and near-black arrives as
+ * purple.
+ *
+ * TH_C() swaps the halves at compile time, so the constants below stay
+ * readable as ordinary RGB565 while the framebuffer holds what the panel
+ * actually wants. Zero runtime cost, and no per-pixel conversion in the draw
+ * path. The sRGB each value came from is in the comment beside it.
  *
  * SPDX-License-Identifier: MIT
  */
 #ifndef BASANOS_THEME_H
 #define BASANOS_THEME_H
 
+#include <stdint.h>
+
+#define TH_C(v) ((uint16_t)((((uint16_t)(v) & 0x00FFu) << 8) | \
+                            (((uint16_t)(v) & 0xFF00u) >> 8)))
+
 /* --- ground ------------------------------------------------------------- */
-#define TH_PAPER    0xF79D   /* #F3F1EC  warm paper, the page              */
-#define TH_CARD     0xFFFF   /* #FFFFFF  raised surface                    */
-#define TH_SUNK     0xEF3B   /* #EDEAE2  recessed surface                  */
+#define TH_PAPER    TH_C(0xFFFF)   /* #FFFFFF  the page                     */
+#define TH_CARD     TH_C(0xFFFF)   /* #FFFFFF  raised surface, ruled edge   */
+#define TH_SUNK     TH_C(0xF7BE)   /* #F4F5F7  recessed band, cool grey     */
 
 /* --- ink ---------------------------------------------------------------- */
-#define TH_INK      0x18C2   /* #1A1814  body text, near-black warm        */
-#define TH_INK2     0x4A27   /* #4A443A  secondary                         */
-#define TH_INK3     0x7BAC   /* #7B7466  tertiary, captions                */
+#define TH_INK      TH_C(0x10A3)   /* #101418  body, cool near-black        */
+#define TH_INK2     TH_C(0x3A29)   /* #3D444D  secondary                    */
+#define TH_INK3     TH_C(0x73F1)   /* #767E88  captions                     */
 
 /* --- rules -------------------------------------------------------------- */
-#define TH_RULE     0xDED9   /* #DFDACE  hairline                          */
-#define TH_RULE2    0xCE57   /* #CFC8B8  stronger divider                  */
+#define TH_RULE     TH_C(0xE73D)   /* #E3E6EA  hairline                     */
+#define TH_RULE2    TH_C(0xCE7A)   /* #C9CED6  divider                      */
 
 /* --- accent ------------------------------------------------------------- */
-#define TH_BRASS    0x8B65   /* #8A6D2F  deep gold, readable as small text */
-#define TH_SHINE    0xCD04   /* #C9A227  bright gold, marks only           */
-#define TH_WASH     0xF75B   /* #F6EFDC  gold wash, selected row           */
+#define TH_BRASS    TH_C(0x9BC3)   /* #9A7B1F  deep gold, readable small    */
+#define TH_SHINE    TH_C(0xD566)   /* #D4AF37  bright gold, marks only      */
+#define TH_WASH     TH_C(0xFFBC)   /* #FBF6E6  pale gold, selected row      */
 
 /* --- semantic, separate from the accent --------------------------------- */
-#define TH_OK       0x3B49   /* #3F6B4A  benign / caught                   */
-#define TH_WARN     0xAB83   /* #A8701F  active / late                     */
-#define TH_STOP     0x89C5   /* #8C3A2E  disruptive / missed               */
-
-#define TH_OK_W     0xE75C   /* #E9EFE9                                    */
-#define TH_WARN_W   0xF77B   /* #F7EEDF                                    */
-#define TH_STOP_W   0xF75C   /* #F5E8E4                                    */
+#define TH_OK       TH_C(0x2B49)   /* #2F6B4F                               */
+#define TH_WARN     TH_C(0xABA3)   /* #A9761B                               */
+#define TH_STOP     TH_C(0xA165)   /* #A32E2E                               */
 
 /* --- rhythm ------------------------------------------------------------- */
-#define TH_PAD       10      /* page margin                                */
-#define TH_HEAD_H    26      /* header band                                */
-#define TH_FOOT_H    18      /* footer band                                */
-#define TH_ROW_H     34      /* list row                                   */
+#define TH_PAD       10
+#define TH_HEAD_H    26
+#define TH_FOOT_H    18
+#define TH_ROW_H     34
 
 #endif /* BASANOS_THEME_H */

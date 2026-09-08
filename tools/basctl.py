@@ -124,6 +124,15 @@ def main():
         sys.exit("no response from the device — is it booted?")
 
     def run(line, wait):
+        # Opening the port resets the board on macOS whatever DTR is set to, so
+        # device state only survives WITHIN one session. "wait N" lets a script
+        # hold the connection open while the device does something.
+        if line.startswith("wait "):
+            secs = float(line.split()[1])
+            print(f"> wait {secs}s")
+            for r in drain(s, secs, a.log):
+                print("  " + r)
+            return
         print(f"> {line}")
         for r in command(s, line, wait, a.log):
             print("  " + r)

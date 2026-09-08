@@ -93,6 +93,16 @@ static bool parse(char *line, bas_cmd_t *c)
     if (!strcmp(v, "abort"))    { c->kind = CMD_ABORT;    return true; }
     if (!strcmp(v, "card"))     { c->kind = CMD_CARD;     return true; }
     if (!strcmp(v, "selftest")) { c->kind = CMD_SELFTEST; return true; }
+    if (!strcmp(v, "recon"))    { c->kind = CMD_RECON;    return true; }
+
+    if (!strcmp(v, "sniff")) {
+        c->kind = CMD_SNIFF;
+        /* "sniff off" stops; "sniff" hops; "sniff 6" camps on a channel. */
+        if (n >= 2 && !strcmp(tok[1], "off")) { c->index = -1; }
+        else if (n >= 2)                      { c->index = atoi_safe(tok[1]); }
+        else                                  { c->index = 0; }
+        return true;
+    }
 
     if (!strcmp(v, "lock")) {
         if (n < 3) { return false; }

@@ -169,6 +169,11 @@ static void wifi_init(void)
 
 static void survey(void)
 {
+    /* The scan and the promiscuous receiver both want the radio. Stopping the
+     * receiver first avoids a scan that silently returns nothing. */
+    bool was_listening = bas_sniff_active();
+    if (was_listening) { bas_sniff_stop(); }
+
     bas_scan_reset(&s_scan);
 
     wifi_scan_config_t cfg = {
@@ -210,6 +215,7 @@ static void survey(void)
     }
 
     bas_scan_sort_rssi(&s_scan);
+    if (was_listening) { bas_sniff_start(0); }
     ESP_LOGI(TAG, "survey: %u networks", (unsigned)s_scan.count);
     for (uint8_t i = 0; i < s_scan.count; i++) {
         const bas_ap_t *ap = &s_scan.ap[i];
@@ -464,6 +470,64 @@ static void console_exec(const bas_cmd_t *c)
         }
         break;
 
+    case CMD_SNIFF:
+        if (c->index < 0) {
+            bas_sniff_stop();
+            bas_console_reply("receiver stopped");
+        } else {
+            bas_sniff_start((uint8_t)c->index);
+            bas_console_reply("listening, %s",
+                              c->index == 0 ? "hopping" : "camped");
+        }
+        break;
+
+    case CMD_RECON: {
+        const bas_fcount_t     *f  = bas_sniff_frames();
+        const bas_chansurvey_t *ch = bas_sniff_channels();
+        const bas_stalist_t    *sl = bas_sniff_stations();
+        int pn = 0;
+        const bas_probe_t *pl = bas_sniff_probes(&pn);
+
+        bas_console_reply("receiver=%d raw=%u ch=%u frames=%u rate=%u.%02u/s",
+                          (int)bas_sniff_active(), (unsigned)bas_sniff_raw(),
+                          (unsigned)bas_sniff_current_channel(),
+                          (unsigned)f->total,
+                          (unsigned)(bas_fcount_rate_x100(f) / 100u),
+                          (unsigned)(bas_fcount_rate_x100(f) % 100u));
+        bas_console_reply("beacon=%u probe=%u deauth=%u disassoc=%u data=%u",
+                          (unsigned)f->frames[BAS_FT_BEACON],
+                          (unsigned)f->frames[BAS_FT_PROBE_REQ],
+                          (unsigned)f->frames[BAS_FT_DEAUTH],
+                          (unsigned)f->frames[BAS_FT_DISASSOC],
+                          (unsigned)f->frames[BAS_FT_DATA]);
+
+        uint8_t q = bas_chan_quietest(ch, 400);
+        if (q != 0u) {
+            bas_console_reply("quietest measured channel: %u", (unsigned)q);
+        } else {
+            bas_console_reply("no channel dwelt on long enough to judge");
+        }
+
+        bas_console_reply("clients: %u", (unsigned)sl->count);
+        for (uint8_t i = 0; i < sl->count && i < 8u; i++) {
+            char mac[18], bss[18];
+            bas_mac_fmt(sl->s[i].mac, mac, sizeof(mac));
+            bas_mac_fmt(sl->s[i].bssid, bss, sizeof(bss));
+            bas_console_reply("  %s on %s %4d dBm x%u%s", mac, bss,
+                              (int)sl->s[i].rssi, (unsigned)sl->s[i].frames,
+                              sl->s[i].randomised ? " randomised" : "");
+        }
+
+        bas_console_reply("probed names: %d", pn);
+        for (int i = 0; i < pn && i < 8; i++) {
+            char mac[18];
+            bas_mac_fmt(pl[i].src, mac, sizeof(mac));
+            bas_console_reply("  \"%s\" from %s x%u", pl[i].ssid, mac,
+                              (unsigned)pl[i].count);
+        }
+        break;
+    }
+
     case CMD_SELFTEST: {
         bas_selftest_t st;
         bas_selftest_run(&st);
@@ -483,7 +547,7 @@ static void console_exec(const bas_cmd_t *c)
 typedef enum {
     ST_HOME, ST_WIFI, ST_NETWORKS, ST_TARGET, ST_LABEL,
     ST_ATTACKS, ST_ATTACK, ST_HOLD, ST_ASK, ST_RESULTS,
-    ST_BLE, ST_RECON,
+    ST_BLE, ST_RECON, ST_CHANNELS, ST_FRAMES, ST_CLIENTS, ST_PROBES,
 } state_t;
 
 static uint16_t class_stripe(bas_class_t k)
@@ -557,6 +621,9 @@ void app_main(void)
 
     state_t  st_cur = ST_HOME;
     int  home_sel = 0, wifi_sel = 0, net_sel = 0, atk_sel = 0, ble_sel = 0;
+    int  recon_sel = 0, cli_sel = 0, probe_sel = 0;
+    bas_stalist_t clients;
+    bas_sta_reset(&clients);
     char label[BAS_LABEL_MAX] = {0};
     uint32_t hold_start = 0, ask_until = 0, run_frames = 0;
     int  run_idx = -1;
@@ -895,22 +962,112 @@ void app_main(void)
         }
 
         case ST_RECON: {
-            char b0[40], b1[40], b2[40];
-            snprintf(b0, sizeof(b0), "%u networks", (unsigned)s_scan.count);
-            snprintf(b1, sizeof(b1), "%s", s_engage.locked
-                        ? (s_engage.target.hidden ? "(hidden)"
-                                                  : s_engage.target.ssid)
-                        : "nothing locked");
-            snprintf(b2, sizeof(b2), "%u runs recorded",
-                     (unsigned)s_card.count);
-            rows[0] = (bas_row_t){ "Survey", b0, 0, true };
-            rows[1] = (bas_row_t){ "Locked target", b1, 0, s_engage.locked };
-            rows[2] = (bas_row_t){ "Session", b2, 0, true };
+            bool on = bas_sniff_active();
+            rows[0] = (bas_row_t){ "Channel analyser",
+                                   on ? "listening" : "start the receiver",
+                                   0, true };
+            rows[1] = (bas_row_t){ "Frame monitor",
+                                   on ? "what is on air" : "needs the receiver",
+                                   0, on };
+            rows[2] = (bas_row_t){ "Clients",
+                                   on ? "devices seen on air"
+                                      : "needs the receiver", 0, on };
+            rows[3] = (bas_row_t){ "Probes",
+                                   on ? "names devices are asking for"
+                                      : "needs the receiver", 0, on };
+            rows[4] = (bas_row_t){ on ? "Stop listening" : "Start listening",
+                                   on ? "release the radio"
+                                      : "receive-only, hops the band",
+                                   0, true };
             if (redraw) {
-                bas_ui_list("Recon", NULL, rows, 3, 0, "hold LEFT back");
+                bas_ui_list("Recon", on ? "live" : NULL, rows, 5, recon_sel,
+                            "LEFT open   hold LEFT back");
                 redraw = false;
             }
-            if (back || accept) { st_cur = ST_HOME; redraw = true; }
+            if (next) { recon_sel = (recon_sel + 1) % 5; redraw = true; }
+            if (back) { st_cur = ST_HOME; redraw = true; break; }
+            int hit = tap ? bas_ui_list_hit(tx, ty, recon_sel, 5) : -1;
+            if (hit >= 0) {
+                if (hit == recon_sel) { accept = true; }
+                else { recon_sel = hit; redraw = true; }
+            }
+            if (accept && rows[recon_sel].enabled) {
+                switch (recon_sel) {
+                case 0:
+                    if (!on) { bas_sniff_start(0); }
+                    st_cur = ST_CHANNELS;
+                    break;
+                case 1: st_cur = ST_FRAMES; break;
+                case 2:
+                    if (s_engage.locked) {
+                        bas_sniff_clients_of(s_engage.target.bssid, &clients);
+                    } else {
+                        clients = *bas_sniff_stations();
+                        bas_sta_sort_rssi(&clients);
+                    }
+                    cli_sel = 0;
+                    st_cur = ST_CLIENTS;
+                    break;
+                case 3: probe_sel = 0; st_cur = ST_PROBES; break;
+                case 4:
+                    if (on) { bas_sniff_stop(); } else { bas_sniff_start(0); }
+                    break;
+                default: break;
+                }
+                redraw = true;
+            }
+            break;
+        }
+
+        case ST_CHANNELS:
+            /* Hop while this screen is up. Dwell is set here rather than in the
+             * receiver, so the survey owns the trade between coverage and
+             * confidence. */
+            bas_sniff_hop(700);
+            bas_ui_channels(bas_sniff_channels(), bas_sniff_current_channel());
+            if (back || accept) { st_cur = ST_RECON; redraw = true; }
+            break;
+
+        case ST_FRAMES:
+            bas_ui_frames(bas_sniff_frames(), bas_sniff_current_channel());
+            if (back || accept) { st_cur = ST_RECON; redraw = true; }
+            break;
+
+        case ST_CLIENTS: {
+            if (redraw) { bas_ui_clients(&clients, cli_sel); redraw = false; }
+            if (back) { st_cur = ST_RECON; redraw = true; break; }
+            if (next && clients.count) {
+                cli_sel = (cli_sel + 1) % (int)clients.count;
+                redraw = true;
+            }
+            int hit = tap ? bas_ui_list_hit(tx, ty, cli_sel, clients.count) : -1;
+            if (hit >= 0) { cli_sel = hit; redraw = true; }
+            /* Narrowing to one client tightens the engagement, so it is only
+             * offered when there is an engagement to tighten. */
+            if (accept && clients.count && s_engage.locked) {
+                bas_err_t rc = bas_engage_set_client(&s_engage,
+                                                     clients.s[cli_sel].mac);
+                char mac[18];
+                bas_mac_fmt(clients.s[cli_sel].mac, mac, sizeof(mac));
+                bas_ui_note(rc == BAS_OK ? "NARROWED" : "REFUSED",
+                            rc == BAS_OK ? mac : bas_err_str(rc),
+                            rc == BAS_OK ? "runs now target this client" : NULL,
+                            rc == BAS_OK ? TH_BRASS : TH_STOP);
+                vTaskDelay(pdMS_TO_TICKS(1800));
+                st_cur = ST_RECON;
+                redraw = true;
+            }
+            break;
+        }
+
+        case ST_PROBES: {
+            int pn = 0;
+            const bas_probe_t *pl = bas_sniff_probes(&pn);
+            if (redraw) { bas_ui_probes(pl, pn, probe_sel); redraw = false; }
+            if (back || accept) { st_cur = ST_RECON; redraw = true; break; }
+            if (next && pn) { probe_sel = (probe_sel + 1) % pn; redraw = true; }
+            int hit = tap ? bas_ui_list_hit(tx, ty, probe_sel, pn) : -1;
+            if (hit >= 0) { probe_sel = hit; redraw = true; }
             break;
         }
         }

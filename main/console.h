@@ -40,6 +40,8 @@ typedef enum {
     CMD_CARD,
     CMD_ALARM,
     CMD_SELFTEST,
+    CMD_SNIFF,
+    CMD_RECON,
 } bas_cmd_kind_t;
 
 typedef struct {

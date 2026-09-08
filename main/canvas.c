@@ -1,5 +1,6 @@
 /* Basanos — RGB565 canvas. SPDX-License-Identifier: MIT */
 #include "canvas.h"
+#include "font_serif.h"
 
 #include <string.h>
 
@@ -117,6 +118,13 @@ void bas_text(bas_canvas_t *c, int x, int y, const char *s,
     }
 }
 
+void bas_text_b(bas_canvas_t *c, int x, int y, const char *s,
+                uint16_t colour, int scale)
+{
+    bas_text(c, x, y, s, colour, scale);
+    bas_text(c, x + 1, y, s, colour, scale);
+}
+
 int bas_text_width(const char *s, int scale)
 {
     if (s == NULL || scale < 1) {
@@ -161,4 +169,61 @@ int bas_text_clip(bas_canvas_t *c, int x, int y, const char *s,
     glyph(c, cx, y, '~', colour, scale);
     cx += pitch;
     return cx - x - scale;
+}
+
+/* --- serif display face --------------------------------------------------- */
+
+static const bas_glyph_t *serif_glyph(unsigned char ch)
+{
+    if (ch < BAS_SERIF_FIRST || ch >= BAS_SERIF_FIRST + BAS_SERIF_COUNT) {
+        ch = '?';
+    }
+    return &bas_serif[ch - BAS_SERIF_FIRST];
+}
+
+void bas_serif_text(bas_canvas_t *c, int x, int y, const char *s,
+                    uint16_t colour, int scale)
+{
+    if (s == NULL || scale < 1) {
+        return;
+    }
+    int cx = x;
+    for (; *s != '\0'; s++) {
+        const bas_glyph_t *g = serif_glyph((unsigned char)*s);
+        for (int row = 0; row < BAS_SERIF_H; row++) {
+            uint32_t bits = g->rows[row];
+            if (bits == 0u) {
+                continue;                 /* most rows of most glyphs */
+            }
+            for (int col = 0; col < 20; col++) {
+                if ((bits & (1u << col)) == 0u) {
+                    continue;
+                }
+                if (scale == 1) {
+                    bas_px(c, cx + col, y + row, colour);
+                } else {
+                    bas_fill(c, cx + col * scale, y + row * scale,
+                             scale, scale, colour);
+                }
+            }
+        }
+        cx += g->adv * scale;
+    }
+}
+
+int bas_serif_width(const char *s, int scale)
+{
+    if (s == NULL || scale < 1) {
+        return 0;
+    }
+    int w = 0;
+    for (; *s != '\0'; s++) {
+        w += serif_glyph((unsigned char)*s)->adv;
+    }
+    return w * scale;
+}
+
+int bas_serif_height(int scale)
+{
+    return BAS_SERIF_H * (scale < 1 ? 1 : scale);
 }
