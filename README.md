@@ -68,6 +68,7 @@ A family that grades nothing does not ship.
 | Disassociation | disruptive | Frame-shape analysis is not narrowly deauth-specific |
 | Auth flood | disruptive | Association-table pressure reads as attack, not load |
 | Evil twin | active | Roaming stays clear while a posture conflict escalates |
+| PMKID solicitation | active | An unauthenticated association draws EAPOL M1 |
 | Beacon set | active | New-BSSID arrival rate scores; a busy room is not a flood |
 | Karma responder | active | The gap between names a radio answers and announces |
 | Probe requests | benign | Client tracking survives MAC randomisation |
@@ -142,6 +143,21 @@ None of it transmits.
 
 These are missing by decision, not oversight. Each would be straightforward to
 build; none would move a number on a scorecard.
+
+**Key material.** The PMKID family solicits EAPOL M1 and records **whether a
+PMKID was offered** — never the value. There is no buffer for it anywhere in
+the firmware and no caller could ask for one. A sensor detects the
+solicitation, not what the tester keeps, so storing sixteen bytes of crackable
+material would add custody and liability without adding a measurement. *"This
+AP hands a PMKID to any unauthenticated device"* is the line that belongs in a
+report.
+
+Four-way handshake capture is absent for the original reason: it is genuinely
+passive, so nothing can observe it happening and it exercises no detector.
+
+**HID keystroke timing** is listed but cannot ship on this board. USB HID means
+TinyUSB taking the port, and the USB-Serial/JTAG console — the device's control
+channel — disappears with it. That trade is not worth making here.
 
 **Credential capture in every form.** No captive portal, no cloned sign-in
 page, no credential store. A harvested password does not tell a customer
@@ -267,7 +283,8 @@ the device halts on that screen rather than showing a target picker.**
 | Karma responder | ✅ verified — 8 names answered from live probes |
 | Promiscuous receiver | ✅ verified — 1118 frames in 10 s, 6 clients, 15 probed names |
 | BLE families | ✅ verified — 120 identities spam, 1 persistent for tracker dwell |
-| PMKID solicitation | 🧱 next — emits the request, records whether a PMKID was *offered*, never stores one |
+| PMKID solicitation | ✅ verified — full auth→assoc→M1 conversation, finding recorded |
+| HID keystroke timing | 🧱 blocked by design — see below |
 
 Transmission is verified independently rather than by trusting a return code:
 a separate machine's Wi-Fi scanner picks the synthetic networks out of the air

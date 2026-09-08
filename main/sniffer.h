@@ -83,6 +83,36 @@ uint32_t bas_sniff_karma_answered(void);
 uint32_t bas_sniff_karma_dropped(void);
 void     bas_sniff_karma_note_answer(void);
 
+/* --- PMKID solicitation watch ----------------------------------------------
+
+   While a synthetic station is being watched, the receiver follows what the
+   access point says back to it: the authentication response, the association
+   response, and EAPOL message 1.
+
+   It records WHETHER a PMKID was offered. It does not record the PMKID. The
+   sensor being tested detects the solicitation, not what the tester keeps, so
+   storing sixteen bytes of crackable material would add liability and no
+   measurement. "This AP hands a PMKID to any unauthenticated device" is the
+   finding worth putting in a report.
+   ------------------------------------------------------------------------- */
+
+typedef struct {
+    bool     watching;
+    bool     auth_resp;
+    uint16_t auth_status;
+    bool     assoc_resp;
+    uint16_t assoc_status;
+    bool     eapol_m1;
+    bool     pmkid_offered;   /* a PMKID KDE was present -- never its value */
+    uint32_t started_ms;
+    uint32_t m1_ms;
+} bas_pmkid_watch_t;
+
+/* Follow what `bssid` says to `sta`. */
+void bas_sniff_watch(const uint8_t sta[6], const uint8_t bssid[6]);
+void bas_sniff_watch_stop(void);
+const bas_pmkid_watch_t *bas_sniff_watch_result(void);
+
 /* Live views. The structures update under the caller's feet, which is fine for
  * drawing a screen and wrong for arithmetic you intend to keep -- copy first
  * if a number has to stay still. */

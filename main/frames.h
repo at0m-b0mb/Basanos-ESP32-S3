@@ -41,6 +41,18 @@ size_t bas_frame_beacon(uint8_t *buf, const uint8_t bssid[6],
 size_t bas_frame_probe_req(uint8_t *buf, const uint8_t src[6],
                            const char *ssid, uint8_t channel, uint16_t seq);
 
+/* Association request carrying an RSN element that advertises PMKID caching.
+ *
+ * This is the second half of the PMKID solicitation. An AP that supports
+ * PMKID caching answers the association with EAPOL message 1 containing a
+ * PMKID, unprompted and before any credential is exchanged -- which is the
+ * whole point of the clientless attack, and the event a sensor detects.
+ *
+ * `ssid` is the target's own name, taken from the engagement. */
+size_t bas_frame_assoc_req(uint8_t *buf, const uint8_t bssid[6],
+                           const uint8_t src[6], const char *ssid,
+                           uint16_t seq);
+
 /* Probe response: a beacon addressed to one requester, claiming to be the
  * network they asked for. This is the karma answer.
  *

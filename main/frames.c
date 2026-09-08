@@ -67,6 +67,22 @@ size_t bas_frame_auth(uint8_t *buf, const uint8_t bssid[6],
     return n;
 }
 
+/* The extended supported-rates element, carrying the OFDM rates that do not
+ * fit in the eight slots of the basic element.
+ *
+ * Omitting this is why an association is refused with status 18, "does not
+ * support all rates in the BSSBasicRateSet": a modern AP puts 24 Mbps in its
+ * basic set, and a station that never mentions 24 is refused before any
+ * security negotiation happens. */
+static size_t add_ext_rates(uint8_t *b, size_t n)
+{
+    static const uint8_t ext[] = { 0x30, 0x48, 0x60, 0x6C };  /* 24 36 48 54 */
+    b[n++] = 0x32;                       /* element: extended rates       */
+    b[n++] = (uint8_t)sizeof(ext);
+    memcpy(&b[n], ext, sizeof(ext));
+    return n + sizeof(ext);
+}
+
 /* Rates the ESP32 radio actually supports, as a supported-rates element. */
 static size_t add_rates(uint8_t *b, size_t n)
 {
@@ -248,6 +264,51 @@ size_t bas_frame_probe_resp(uint8_t *buf, const uint8_t dst[6],
     buf[n++] = 0x03;
     buf[n++] = 0x01;
     buf[n++] = channel;
+
+    return n;
+}
+
+size_t bas_frame_assoc_req(uint8_t *buf, const uint8_t bssid[6],
+                           const uint8_t src[6], const char *ssid,
+                           uint16_t seq)
+{
+    if (buf == NULL || bssid == NULL || src == NULL || ssid == NULL) {
+        return 0;
+    }
+    size_t sl = strlen(ssid);
+    if (sl == 0u || sl > 32u) {
+        /* A hidden network cannot be associated to by name. */
+        return 0;
+    }
+
+    size_t n = mgmt_hdr(buf, 0, bssid, src, bssid, seq);
+
+    /* ESS + Privacy: claiming privacy is what makes the AP treat this as an
+     * RSN association rather than an open one. */
+    buf[n++] = 0x11; buf[n++] = 0x00;
+    buf[n++] = 0x0A; buf[n++] = 0x00;    /* listen interval               */
+
+    buf[n++] = 0x00;                     /* SSID                          */
+    buf[n++] = (uint8_t)sl;
+    memcpy(&buf[n], ssid, sl);
+    n += sl;
+
+    n = add_rates(buf, n);
+    n = add_ext_rates(buf, n);
+
+    /* RSN: CCMP group, CCMP pairwise, PSK AKM. An AP with PMKID caching
+     * enabled answers this with EAPOL M1 carrying a PMKID before any
+     * credential has been exchanged. */
+    static const uint8_t rsn[] = {
+        0x30, 0x14,
+        0x01, 0x00,                       /* version                      */
+        0x00, 0x0F, 0xAC, 0x04,           /* group cipher: CCMP           */
+        0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,  /* 1 pairwise: CCMP          */
+        0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02,  /* 1 AKM: PSK                */
+        0x00, 0x00                        /* RSN capabilities             */
+    };
+    memcpy(&buf[n], rsn, sizeof(rsn));
+    n += sizeof(rsn);
 
     return n;
 }

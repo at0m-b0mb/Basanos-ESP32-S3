@@ -4,16 +4,20 @@
  * detect it. The `detector` field is not documentation: it is the reason the
  * family is in the build. A family that exercises nothing does not ship.
  *
- * Grounded in what the public ESP32/ESP8266 tools actually emit (ESP32
- * Marauder, SpacehuhnTech esp8266_deauther), with two deliberate omissions:
+ * Two deliberate omissions, and one correction:
  *
- *   - PMKID / EAPOL handshake capture. It is passive, so no detector can see
- *     it happen; it exercises nothing and only yields crackable material.
  *   - Evil portal / captive portal. Credential harvesting and brand
  *     impersonation. Not a measurement.
+ *   - Four-way handshake capture. Genuinely passive, so no detector can
+ *     observe it happening; it exercises nothing and yields only crackable
+ *     material.
  *
- * Neither omission costs the defensive side anything, which is the test a
- * feature has to pass to be here.
+ * PMKID was originally excluded on the same "passive" reasoning and that was
+ * WRONG. A PMKID is not captured passively -- it is solicited: the tester
+ * sends an association request and the AP volunteers EAPOL M1 in reply. That
+ * solicitation is exactly what a sensor detects, so the family belongs here.
+ * It records only that a PMKID was OFFERED and never the value, which leaves
+ * the sensor test identical and the crackable material non-existent.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -37,6 +41,8 @@ typedef enum {
     BAS_FAM_BEACON,          /* bounded, prefixed, fake APs                 */
     BAS_FAM_KARMA_RESP,      /* answer others' probes; log, never portal    */
     BAS_FAM_EVIL_TWIN,       /* duplicate BSSID w/ security-class conflict  */
+    BAS_FAM_PMKID,           /* solicit EAPOL M1; record only that a PMKID
+                              * was OFFERED, never the PMKID itself         */
 
     /* --- disruptive: denies service to something real ------------------- */
     BAS_FAM_AUTH_FLOOD,      /* fills the target AP's association table     */

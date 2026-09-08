@@ -21,6 +21,10 @@ static volatile uint8_t  s_k_head, s_k_tail;
 static volatile bool     s_karma;
 static volatile uint32_t s_k_answered, s_k_dropped;
 
+static bas_pmkid_watch_t s_watch;
+static uint8_t           s_watch_sta[6];
+static uint8_t           s_watch_bssid[6];
+
 static volatile uint32_t s_raw;   /* callback entries, before any parsing */
 static bool    s_active;
 static bool    s_hopping;
@@ -106,6 +110,69 @@ static void note_probe(const uint8_t *ies, size_t len, const uint8_t src[6],
     p->randomised = bas_mac_is_randomised(src);
 }
 
+/* Look for a PMKID key-data element in EAPOL message 1.
+ *
+ * Records only that one was present. The value is deliberately never copied
+ * anywhere: this function has no out-parameter for it and no caller could ask.
+ */
+static void note_eapol(const uint8_t *p, size_t len, uint32_t t)
+{
+    /* LLC/SNAP then EtherType 0x888E. */
+    static const uint8_t snap[] = { 0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00,
+                                    0x88, 0x8E };
+    if (len < sizeof(snap) || memcmp(p, snap, sizeof(snap)) != 0) {
+        return;
+    }
+    size_t off = sizeof(snap);
+
+    /* EAPOL header: version, type (3 = key), length. */
+    if (off + 4u > len || p[off + 1] != 0x03u) {
+        return;
+    }
+    off += 4u;
+
+    /* Key descriptor type, then key information. */
+    if (off + 3u > len) {
+        return;
+    }
+    off += 1u;
+    uint16_t info = (uint16_t)((p[off] << 8) | p[off + 1]);
+
+    /* M1 is the one with ACK set and MIC clear: the AP has spoken first and
+     * nothing has been proven yet, which is exactly why a PMKID here is
+     * available to anybody who asks. */
+    bool ack = (info & 0x0080u) != 0u;
+    bool mic = (info & 0x0100u) != 0u;
+    if (!ack || mic) {
+        return;
+    }
+
+    s_watch.eapol_m1 = true;
+    s_watch.m1_ms = t;
+
+    /* Skip to the key-data length: info(2) len(2) replay(8) nonce(32) iv(16)
+     * rsc(8) reserved(8) mic(16). */
+    size_t kd_len_off = off + 2u + 2u + 8u + 32u + 16u + 8u + 8u + 16u;
+    if (kd_len_off + 2u > len) {
+        return;
+    }
+    uint16_t kd_len = (uint16_t)((p[kd_len_off] << 8) | p[kd_len_off + 1]);
+    size_t kd = kd_len_off + 2u;
+    if (kd_len == 0u || kd + kd_len > len) {
+        return;
+    }
+
+    /* The PMKID KDE: vendor-specific, length 20, OUI 00-0F-AC, data type 4. */
+    for (size_t i = 0; i + 6u <= (size_t)kd_len; i++) {
+        const uint8_t *q = &p[kd + i];
+        if (q[0] == 0xDDu && q[1] == 0x14u &&
+            q[2] == 0x00u && q[3] == 0x0Fu && q[4] == 0xACu && q[5] == 0x04u) {
+            s_watch.pmkid_offered = true;
+            return;
+        }
+    }
+}
+
 static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 {
     s_raw++;
@@ -139,6 +206,35 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
         return;
     }
 
+    /* The PMKID watch: only frames the access point addressed to our
+     * synthetic station. */
+    if (s_watch.watching && bas_mac_eq(h->a1, s_watch_sta) &&
+        bas_mac_eq(h->a2, s_watch_bssid)) {
+        size_t hlen = sizeof(hdr_t);
+        if (ftype == 0u && fsubtype == 11u) {          /* auth response   */
+            if ((size_t)pkt->rx_ctrl.sig_len >= hlen + 6u) {
+                s_watch.auth_resp = true;
+                s_watch.auth_status =
+                    (uint16_t)(pkt->payload[hlen + 4] |
+                               (pkt->payload[hlen + 5] << 8));
+            }
+        } else if (ftype == 0u && fsubtype == 1u) {    /* assoc response  */
+            if ((size_t)pkt->rx_ctrl.sig_len >= hlen + 4u) {
+                s_watch.assoc_resp = true;
+                s_watch.assoc_status =
+                    (uint16_t)(pkt->payload[hlen + 2] |
+                               (pkt->payload[hlen + 3] << 8));
+            }
+        } else if (ftype == 2u) {                      /* data: EAPOL?    */
+            /* QoS data carries two extra header bytes before the payload. */
+            size_t off = hlen + ((fsubtype & 0x08u) ? 2u : 0u);
+            if ((size_t)pkt->rx_ctrl.sig_len > off) {
+                note_eapol(&pkt->payload[off],
+                           (size_t)pkt->rx_ctrl.sig_len - off, t);
+            }
+        }
+    }
+
     /* Attribute a station to a cell. The three addresses mean different things
      * depending on the direction bits, and getting that wrong files the AP as
      * one of its own clients. */
@@ -158,6 +254,34 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 /* --- control -------------------------------------------------------------- */
 
 uint32_t bas_sniff_raw(void) { return s_raw; }
+
+void bas_sniff_watch(const uint8_t sta[6], const uint8_t bssid[6])
+{
+    if (sta == NULL || bssid == NULL) {
+        return;
+    }
+    /* A run cycles through several identities, and the answer it is looking
+     * for may arrive under any of them. The findings are therefore sticky
+     * across a re-watch: resetting them would let a later identity erase the
+     * evidence an earlier one earned. */
+    bool m1     = s_watch.eapol_m1;
+    bool pmkid  = s_watch.pmkid_offered;
+    bool sticky = s_watch.watching;
+
+    memset(&s_watch, 0, sizeof(s_watch));
+    if (sticky) {
+        s_watch.eapol_m1      = m1;
+        s_watch.pmkid_offered = pmkid;
+    }
+    memcpy(s_watch_sta, sta, 6);
+    memcpy(s_watch_bssid, bssid, 6);
+    s_watch.started_ms = now_ms();
+    s_watch.watching = true;
+}
+
+void bas_sniff_watch_stop(void) { s_watch.watching = false; }
+
+const bas_pmkid_watch_t *bas_sniff_watch_result(void) { return &s_watch; }
 
 void bas_sniff_karma_arm(bool on)
 {

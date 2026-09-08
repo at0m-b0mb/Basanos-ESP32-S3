@@ -24,6 +24,7 @@ bool bas_tx_supported(bas_family_t f)
     case BAS_FAM_BEACON:
     case BAS_FAM_EVIL_TWIN:
     case BAS_FAM_KARMA_RESP:
+    case BAS_FAM_PMKID:
     case BAS_FAM_BLE_ADV:
     case BAS_FAM_BLE_TRACKER:
     case BAS_FAM_AUTH_FLOOD:
@@ -65,6 +66,145 @@ static bool is_directed(bas_family_t f)
 {
     return f == BAS_FAM_DEAUTH || f == BAS_FAM_DISASSOC ||
            f == BAS_FAM_AUTH_FLOOD;
+}
+
+/* PMKID solicitation.
+ *
+ * Authenticate, associate, and see whether the access point volunteers a PMKID
+ * in EAPOL message 1 before any credential has been exchanged. Two things come
+ * out of it: the solicitation itself, which is what a PMKID sensor detects,
+ * and a posture finding -- whether this AP hands a PMKID to anyone who asks.
+ *
+ * The PMKID is never stored. The receiver records that one was present and
+ * nothing more; there is no buffer for it anywhere in the firmware. A sensor
+ * sees an identical event either way, so keeping sixteen bytes of crackable
+ * material would add custody and liability without adding a measurement.
+ */
+static esp_err_t bas_tx_run_pmkid(const bas_plan_t *p, const bas_engagement_t *e,
+                                  bas_tx_tick_cb tick, void *ctx,
+                                  bas_tx_result_t *out)
+{
+    bas_tx_result_t r;
+    memset(&r, 0, sizeof(r));
+
+    if (e->target.hidden || e->target.ssid[0] == '\0') {
+        /* Associating needs a name, and a hidden network has not given one. */
+        ESP_LOGW(TAG, "pmkid: target has no SSID");
+        r.stopped_by = BAS_ERR_NO_TARGET;
+        if (out != NULL) { *out = r; }
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint8_t ch = (p->channel != 0u) ? p->channel : e->target.channel;
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+
+    bool started_rx = false;
+    if (!bas_sniff_active()) {
+        bas_sniff_start(ch);
+        started_rx = true;
+    } else {
+        bas_sniff_channel(ch);
+    }
+
+    /* One synthetic station per ATTEMPT, not per run. The AP tracks a station
+     * across authentication and association, and once it refuses or drops one
+     * it stops answering that address -- so a machine that keeps the same
+     * identity sends association requests into a conversation the AP has
+     * already ended. Each attempt therefore starts a fresh identity. */
+    uint8_t sta[6];
+    uint32_t identity = 0x9C1Du;
+    bas_frame_synth_mac(sta, identity);
+    bas_sniff_watch(sta, e->target.bssid);
+
+    const uint32_t start    = now_ms();
+    const uint32_t deadline = start + (uint32_t)p->seconds * 1000u;
+    uint8_t  buf[BAS_FRAME_MAX];
+    uint16_t seq = 0;
+    uint32_t last_tick = start;
+    int attempts = 0;
+
+    ESP_LOGI(TAG, "pmkid: soliciting %s on ch%u as %02X:%02X:%02X:%02X:%02X:%02X",
+             e->target.ssid, (unsigned)ch,
+             sta[0], sta[1], sta[2], sta[3], sta[4], sta[5]);
+
+    while (now_ms() < deadline) {
+        uint32_t t = now_ms();
+
+        bas_err_t g = bas_engage_permits_frame(e, e->target.bssid,
+                                               e->target.bssid, t);
+        if (g != BAS_OK) {
+            r.stopped_by = g;
+            r.frames_refused++;
+            break;
+        }
+
+        const bas_pmkid_watch_t *w = bas_sniff_watch_result();
+
+        /* Stop as soon as the question is answered. Repeating the
+         * solicitation after M1 adds noise on air and tells us nothing new. */
+        if (w->eapol_m1) {
+            break;
+        }
+
+        /* An association that was answered and refused, or never answered at
+         * all after we were authenticated, means this identity is spent. Start
+         * a new one rather than repeating into silence. */
+        bool spent = w->assoc_resp ||
+                     (w->auth_resp && (t - w->started_ms) > 4000u);
+        if (spent) {
+            identity += 0x1111u;
+            bas_frame_synth_mac(sta, identity);
+            bas_sniff_watch(sta, e->target.bssid);
+            seq = 0;
+            w = bas_sniff_watch_result();
+        }
+
+        /* Authenticate, then associate once the AP has answered. */
+        size_t len;
+        if (!w->auth_resp) {
+            len = bas_frame_auth(buf, e->target.bssid, sta, seq);
+        } else {
+            len = bas_frame_assoc_req(buf, e->target.bssid, sta,
+                                      e->target.ssid, seq);
+        }
+        if (len == 0u) {
+            r.tx_errors++;
+            break;
+        }
+
+        if (esp_wifi_80211_tx(WIFI_IF_STA, buf, len, false) == ESP_OK) {
+            r.frames_sent++;
+        } else {
+            r.tx_errors++;
+        }
+        seq = (uint16_t)((seq + 1u) & 0x0FFFu);
+        attempts++;
+
+        if (tick != NULL && (t - last_tick) >= 250u) {
+            last_tick = t;
+            r.elapsed_ms = t - start;
+            if (!tick(&r, ctx)) { break; }
+        }
+
+        /* Give the AP time to answer. This family is a conversation, not a
+         * flood, so its rate is deliberately slow. */
+        vTaskDelay(pdMS_TO_TICKS(p->pps > 0u ? (1000u / p->pps) : 500u));
+    }
+
+    const bas_pmkid_watch_t *w = bas_sniff_watch_result();
+    ESP_LOGI(TAG, "pmkid: attempts=%d identities=%u", attempts,
+             (unsigned)((identity - 0x9C1Du) / 0x1111u + 1u));
+    ESP_LOGI(TAG, "pmkid: attempts=%d auth=%d(%u) assoc=%d(%u) m1=%d pmkid=%s",
+             attempts, (int)w->auth_resp, (unsigned)w->auth_status,
+             (int)w->assoc_resp, (unsigned)w->assoc_status, (int)w->eapol_m1,
+             w->pmkid_offered ? "OFFERED" : "not offered");
+
+    bas_sniff_watch_stop();
+    if (started_rx) { bas_sniff_stop(); }
+
+    r.elapsed_ms = now_ms() - start;
+    if (out != NULL) { *out = r; }
+    return ESP_OK;
 }
 
 static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
@@ -182,6 +322,9 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
      * check, the ceilings and the role. */
     if (p.fam == BAS_FAM_BLE_ADV || p.fam == BAS_FAM_BLE_TRACKER) {
         return bas_tx_run_ble(&p, e, tick, ctx, out);
+    }
+    if (p.fam == BAS_FAM_PMKID) {
+        return bas_tx_run_pmkid(&p, e, tick, ctx, out);
     }
 
     uint8_t ch = (p.channel != 0u) ? p.channel : e->target.channel;

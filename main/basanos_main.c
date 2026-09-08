@@ -264,7 +264,7 @@ static bool tx_tick(const bas_tx_result_t *p, void *ctx)
  * should never scroll past a BLE family to find it. */
 static const bas_family_t WIFI_FAMS[] = {
     BAS_FAM_DEAUTH, BAS_FAM_DISASSOC, BAS_FAM_AUTH_FLOOD,
-    BAS_FAM_EVIL_TWIN, BAS_FAM_BEACON, BAS_FAM_KARMA_RESP,
+    BAS_FAM_EVIL_TWIN, BAS_FAM_PMKID, BAS_FAM_BEACON, BAS_FAM_KARMA_RESP,
     BAS_FAM_PROBE_REQ,
 };
 #define WIFI_FAM_N ((int)(sizeof(WIFI_FAMS) / sizeof(WIFI_FAMS[0])))
@@ -415,6 +415,20 @@ static void console_run(const bas_cmd_t *c)
                       (unsigned)res.tx_errors, (unsigned)res.frames_refused,
                       (unsigned)(t1 - t0));
     bas_console_reply("window uptime_ms %u..%u", (unsigned)t0, (unsigned)t1);
+
+    if (f == BAS_FAM_PMKID) {
+        /* The posture finding, which is the half of this family worth putting
+         * in a report. The PMKID itself was never stored. */
+        const bas_pmkid_watch_t *w = bas_sniff_watch_result();
+        bas_console_reply("pmkid auth=%d(status %u) assoc=%d(status %u) m1=%d",
+                          (int)w->auth_resp, (unsigned)w->auth_status,
+                          (int)w->assoc_resp, (unsigned)w->assoc_status,
+                          (int)w->eapol_m1);
+        bas_console_reply("FINDING: %s", w->pmkid_offered
+            ? "AP offers a PMKID to an unauthenticated device"
+            : (w->eapol_m1 ? "AP answered but offered no PMKID"
+                           : "no EAPOL M1 seen"));
+    }
 
     if (res.frames_sent == 0u) {
         if (idx >= 0 && idx == (int)s_card.count - 1) {

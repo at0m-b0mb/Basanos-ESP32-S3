@@ -53,6 +53,15 @@ static const bas_family_spec_t k_fam[BAS_FAM__COUNT] = {
         .klass = BAS_CLASS_ACTIVE, .needs_target = true, .needs_client = false,
         .default_pps = 10, .max_pps = 30, .max_seconds = 60, .min_role = ROLE_OPERATOR,
     },
+    [BAS_FAM_PMKID] = {
+        .name = "PMKID solicitation", .detector = "PMKID capture sensors",
+        .proves = "An unauthenticated association draws EAPOL M1",
+        /* Active, not disruptive: it associates once and denies nothing. The
+         * detectable event is the solicitation, which is why the family is
+         * worth having even though the reply is never kept. */
+        .klass = BAS_CLASS_ACTIVE, .needs_target = true, .needs_client = false,
+        .default_pps = 1, .max_pps = 4, .max_seconds = 30, .min_role = ROLE_OPERATOR,
+    },
     [BAS_FAM_AUTH_FLOOD] = {
         .name = "Auth flood", .detector = "Aegis, Argus",
         .proves = "Association-table pressure is seen as an attack, not load",
