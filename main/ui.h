@@ -96,7 +96,10 @@ void bas_ui_channels(const bas_chansurvey_t *ch, uint8_t current);
 void bas_ui_frames(const bas_fcount_t *f, uint8_t channel);
 
 /* Clients seen, for narrowing an engagement to one device. */
-void bas_ui_clients(const bas_stalist_t *l, int sel);
+/* Clients seen, with the selected ones ticked. Row 0 is a select-all/clear
+ * action, so the whole set can be taken or dropped without walking the list. */
+void bas_ui_clients(const bas_stalist_t *l, int sel,
+                    const bas_engagement_t *e);
 
 /* Networks devices in the room are asking for by name -- their own history,
  * leaking. */

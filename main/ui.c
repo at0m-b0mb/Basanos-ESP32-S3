@@ -521,12 +521,20 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
 
     if (s->needs_target) {
         char mac[18];
-        bas_mac_fmt(e->has_client ? e->client : e->target.bssid, mac,
+        bas_mac_fmt(e->client_n == 1u ? e->client[0] : e->target.bssid, mac,
                     sizeof(mac));
-        snprintf(buf, sizeof(buf), "at %s", mac);
-        bas_text(c, TH_PAD, 132, buf, TH_INK2, 1);
-        bas_text(c, TH_PAD, 146,
-                 e->has_client ? "one client" : "the access point", TH_INK3, 1);
+        if (e->client_n > 1u) {
+            snprintf(buf, sizeof(buf), "across %u selected clients",
+                     (unsigned)e->client_n);
+            bas_text(c, TH_PAD, 132, buf, TH_INK2, 1);
+            bas_text(c, TH_PAD, 146, "one frame each, in turn", TH_INK3, 1);
+        } else {
+            snprintf(buf, sizeof(buf), "at %s", mac);
+            bas_text(c, TH_PAD, 132, buf, TH_INK2, 1);
+            bas_text(c, TH_PAD, 146,
+                     e->client_n == 1u ? "one client" : "the access point",
+                     TH_INK3, 1);
+        }
     } else {
         bas_text(c, TH_PAD, 132, "broadcast advertisement", TH_INK2, 1);
         bas_text(c, TH_PAD, 146, "named " BAS_TEST_PREFIX "nn", TH_INK3, 1);
@@ -959,29 +967,66 @@ void bas_ui_frames(const bas_fcount_t *f, uint8_t channel)
     bas_display_flush();
 }
 
-void bas_ui_clients(const bas_stalist_t *l, int sel)
+void bas_ui_clients(const bas_stalist_t *l, int sel,
+                    const bas_engagement_t *e)
 {
-    static bas_row_t rows[BAS_MAX_STATIONS];
-    static char names[BAS_MAX_STATIONS][20];
-    static char subs[BAS_MAX_STATIONS][40];
+    static bas_row_t rows[BAS_MAX_STATIONS + 1];
+    static char names[BAS_MAX_STATIONS + 1][26];
+    static char subs[BAS_MAX_STATIONS + 1][40];
 
+    int chosen = 0;
     for (uint8_t i = 0; i < l->count; i++) {
-        const bas_station_t *s = &l->s[i];
-        bas_mac_fmt(s->mac, names[i], sizeof(names[i]));
-        snprintf(subs[i], sizeof(subs[i]), "%4d dBm  %u frames%s",
-                 (int)s->rssi, (unsigned)s->frames,
-                 s->randomised ? "  randomised" : "");
-        rows[i].title   = names[i];
-        rows[i].sub     = subs[i];
-        /* A randomised address may not be the same device it was ten minutes
-         * ago, and an operator narrowing an engagement to it should know. */
-        rows[i].stripe  = s->randomised ? TH_WARN : 0u;
-        rows[i].enabled = true;
+        if (bas_engage_has_client(e, l->s[i].mac)) { chosen++; }
     }
 
-    char right[20];
-    snprintf(right, sizeof(right), "%u seen", (unsigned)l->count);
-    bas_ui_list("Clients", right, rows, l->count, sel, "hold LEFT back");
+    bool cell = bas_engage_is_whole_cell(e);
+
+    /* Row 0 is the whole cell: every station on THIS network, including any
+     * that stayed silent through the survey and never appeared below. */
+    snprintf(names[0], sizeof(names[0]), "%s Whole network",
+             cell ? "[x]" : "[ ]");
+    snprintf(subs[0], sizeof(subs[0]), "%s",
+             cell ? "every client on this cell"
+                  : "reaches clients not listed below");
+    rows[0].title   = names[0];
+    rows[0].sub     = subs[0];
+    rows[0].stripe  = cell ? TH_STOP : TH_BRASS;
+    rows[0].enabled = true;
+
+    for (uint8_t i = 0; i < l->count; i++) {
+        const bas_station_t *st = &l->s[i];
+        /* With the whole cell chosen every station is covered, so they all
+         * read as selected rather than looking untouched. */
+        bool on = cell || bas_engage_has_client(e, st->mac);
+
+        char mac[18];
+        bas_mac_fmt(st->mac, mac, sizeof(mac));
+        /* A leading mark rather than a colour alone: which rows are selected
+         * has to survive a glance in daylight. */
+        snprintf(names[i + 1], sizeof(names[i + 1]), "%s %s",
+                 on ? "[x]" : "[ ]", mac);
+        snprintf(subs[i + 1], sizeof(subs[i + 1]), "%4d dBm  %u frames%s",
+                 (int)st->rssi, (unsigned)st->frames,
+                 st->randomised ? "  rotating" : "");
+
+        rows[i + 1].title   = names[i + 1];
+        rows[i + 1].sub     = subs[i + 1];
+        rows[i + 1].stripe  = on ? TH_STOP : 0u;
+        /* Individual picks are meaningless while the whole cell is chosen. */
+        rows[i + 1].enabled = !cell;
+    }
+
+    char right[24];
+    if (cell) {
+        snprintf(right, sizeof(right), "whole cell");
+    } else {
+        snprintf(right, sizeof(right), "%d selected", chosen);
+    }
+
+    bas_ui_list("Clients", right, rows, (int)l->count + 1, sel,
+                cell    ? "LEFT toggle   every client on this network"
+              : chosen > 0 ? "LEFT toggle   runs hit the ticked"
+                           : "LEFT toggle   none = the AP itself");
 }
 
 void bas_ui_probes(const bas_probe_t *p, int n, int sel)

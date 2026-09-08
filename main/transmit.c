@@ -362,11 +362,17 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
     /* The station the directed families address: the specific client when the
      * engagement names one, otherwise the access point itself. Never a
      * broadcast address — the gate below refuses that regardless. */
-    uint8_t dst[6];
-    if (e->has_client) {
-        memcpy(dst, e->client, 6);
-    } else {
-        memcpy(dst, e->target.bssid, 6);
+    /* Directed families cycle through the selected clients, one frame each,
+     * rather than sending a single broadcast. Same effect on the devices the
+     * operator chose, no effect on the ones they did not, and the log can name
+     * exactly which were addressed. With nothing selected there is one
+     * destination: the access point. */
+    const uint8_t dest_n = bas_engage_dest_count(e);
+    if (dest_n == 0u) {
+        ESP_LOGW(TAG, "no destination in this engagement");
+        r.stopped_by = BAS_ERR_NO_TARGET;
+        if (out != NULL) { *out = r; }
+        return ESP_ERR_INVALID_STATE;
     }
 
     const uint32_t period_ms = (p.pps > 0u) ? (1000u / p.pps) : 100u;
@@ -377,7 +383,12 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
     ESP_LOGI(TAG, "run: %s ch%u %u pps for %us (%u frames) at %02X:%02X:%02X:%02X:%02X:%02X",
              bas_family(p.fam)->name, (unsigned)ch, (unsigned)p.pps,
              (unsigned)p.seconds, (unsigned)total,
-             dst[0], dst[1], dst[2], dst[3], dst[4], dst[5]);
+             bas_engage_dest(e, 0)[0], bas_engage_dest(e, 0)[1],
+             bas_engage_dest(e, 0)[2], bas_engage_dest(e, 0)[3],
+             bas_engage_dest(e, 0)[4], bas_engage_dest(e, 0)[5]);
+    if (dest_n > 1u) {
+        ESP_LOGI(TAG, "  cycling %u selected clients", (unsigned)dest_n);
+    }
 
     uint8_t  buf[BAS_FRAME_MAX];
     uint16_t seq = 0;
@@ -391,6 +402,10 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
 
         /* Per frame, not per run. This is what makes an expiring engagement
          * stop a burst that is already in flight. */
+        /* A fresh destination each frame, so a burst is shared across the
+         * selected clients rather than aimed at one of them. */
+        const uint8_t *dst = bas_engage_dest(e, r.frames_sent);
+
         if (is_directed(p.fam)) {
             bas_err_t g = bas_engage_permits_frame(e, dst, e->target.bssid, t);
             if (g != BAS_OK) {

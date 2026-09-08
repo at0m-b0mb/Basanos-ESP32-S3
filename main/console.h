@@ -45,6 +45,8 @@ typedef enum {
     CMD_UART,
     CMD_BLESCAN,
     CMD_PSK,
+    CMD_REGION,
+    CMD_CELL,
 } bas_cmd_kind_t;
 
 typedef struct {

@@ -148,6 +148,25 @@ bas_err_t bas_ie_parse(const uint8_t *ies, size_t len,
             }
             break;
         }
+        case BAS_IE_COUNTRY:
+            /* Two letters and an operating class. Consumer APs often omit
+             * this element entirely, so its absence says nothing. */
+            if (elen >= 3u) {
+                bool printable = (body[0] >= 'A' && body[0] <= 'Z') &&
+                                 (body[1] >= 'A' && body[1] <= 'Z');
+                if (printable) {
+                    out->country[0] = (char)body[0];
+                    out->country[1] = (char)body[1];
+                    out->country[2] = '\0';
+                    if (ap != NULL) {
+                        ap->country[0] = out->country[0];
+                        ap->country[1] = out->country[1];
+                        ap->country[2] = '\0';
+                    }
+                }
+            }
+            break;
+
         case BAS_IE_DS_PARAM:
             if (elen >= 1u) {
                 out->ds_present = true;

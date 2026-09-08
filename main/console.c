@@ -95,6 +95,24 @@ static bool parse(char *line, bas_cmd_t *c)
     if (!strcmp(v, "selftest")) { c->kind = CMD_SELFTEST; return true; }
     if (!strcmp(v, "recon"))    { c->kind = CMD_RECON;    return true; }
 
+    if (!strcmp(v, "cell")) {
+        c->kind  = CMD_CELL;
+        c->index = (n >= 2 && !strcmp(tok[1], "off")) ? 0 : 1;
+        return true;
+    }
+
+    if (!strcmp(v, "region")) {
+        c->kind = CMD_REGION;
+        c->index = -1;                       /* no argument: just report */
+        if (n >= 2) {
+            if (!strcmp(tok[1], "fcc"))  { c->index = 0; }
+            if (!strcmp(tok[1], "etsi")) { c->index = 1; }
+            if (!strcmp(tok[1], "jp"))   { c->index = 2; }
+            if (!strcmp(tok[1], "auto")) { c->index = -2; }
+        }
+        return true;
+    }
+
     if (!strcmp(v, "psk")) {
         c->kind  = CMD_PSK;
         c->secs  = (n >= 2) ? atoi_safe(tok[1]) : 0;

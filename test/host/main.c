@@ -12,7 +12,12 @@ int main(void)
     suite_target();
     suite_engage();
     suite_engage_area();
+    suite_engage_clients();
+    suite_engage_whole_cell();
     suite_family();
+    suite_region();
+    suite_region();
+    suite_region();
     suite_rbac();
     suite_wpa();
     suite_score();

@@ -23,6 +23,7 @@ extern "C" {
 /* Element ids used here. */
 #define BAS_IE_SSID      0u
 #define BAS_IE_DS_PARAM  3u
+#define BAS_IE_COUNTRY   7u
 #define BAS_IE_RSN      48u
 #define BAS_IE_VENDOR  221u
 
@@ -43,6 +44,7 @@ typedef struct {
     bool wps_present;
     bool wps_locked;        /* AP setup locked attribute                   */
 
+    char country[3];        /* claimed regulatory domain, or empty         */
     uint16_t elements;      /* how many elements parsed                    */
     bool     truncated;     /* a length ran past the end of the buffer     */
 } bas_posture_t;

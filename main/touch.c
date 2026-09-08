@@ -22,7 +22,15 @@ static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_dev;
 static bool     s_present;
 static uint8_t  s_chip_id;
-static bool     s_was_down;
+/* Edge state for bas_touch_tapped(), advanced by EVERY read.
+ *
+ * It has to be every read, not only the ones made through bas_touch_tapped():
+ * the arming hold polls the panel through bas_touch_read(), and if that left
+ * this state stale then the first tap check afterwards would see a finger
+ * already resting on the glass as a fresh press. That phantom tap aborted the
+ * countdown the instant it started, every time a run was armed by touch. */
+static bool     s_prev_down;
+static bool     s_last_down;
 static bas_gesture_t s_pending_swipe;
 
 const char *bas_gesture_name(bas_gesture_t g)
@@ -167,6 +175,9 @@ bool bas_touch_read(bas_touch_t *out)
     if (out->gesture >= BAS_GESTURE_UP && out->gesture <= BAS_GESTURE_RIGHT) {
         s_pending_swipe = out->gesture;
     }
+
+    s_prev_down = s_last_down;
+    s_last_down = out->down;
     return true;
 }
 
@@ -178,9 +189,11 @@ bool bas_touch_tapped(uint16_t *x, uint16_t *y)
     }
 
     /* Edge, not level. A level read fires every poll for as long as the finger
-     * rests on the glass, which scrolls a list straight off the end. */
-    bool edge = t.down && !s_was_down;
-    s_was_down = t.down;
+     * rests on the glass, which scrolls a list straight off the end.
+     *
+     * The read above already advanced the edge state, so a finger that was
+     * down before this call is not a new press. */
+    bool edge = t.down && !s_prev_down;
 
     if (edge) {
         if (x != NULL) { *x = t.x; }

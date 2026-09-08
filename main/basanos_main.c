@@ -11,6 +11,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ble.h"
+#define STR2(x) #x
+#define STR(x) STR2(x)
+
 #include "board.h"
 #include "console.h"
 #include "display.h"
@@ -225,6 +228,13 @@ static void survey(void)
             ap.sec           = sec_of(recs[i].authmode);
             ap.last_seen_ms  = now_ms();
             ap.first_seen_ms = ap.last_seen_ms;
+            /* The domain this AP claims. Many consumer APs advertise none, so
+             * an empty code is normal and says nothing either way. */
+            if (recs[i].country.cc[0] >= 'A' && recs[i].country.cc[0] <= 'Z') {
+                ap.country[0] = recs[i].country.cc[0];
+                ap.country[1] = recs[i].country.cc[1];
+                ap.country[2] = '\0';
+            }
             if (bas_ap_check(&ap) != BAS_OK) { continue; }
             bas_scan_observe(&s_scan, &ap);
         }
@@ -243,6 +253,61 @@ static void survey(void)
                  (unsigned)ap->channel, (int)ap->rssi, bas_sec_name(ap->sec),
                  bas_sec_likely_mfp(ap->sec) ? "  MFP" : "");
     }
+}
+
+/* Infer the regulatory domain from what the access points around us claim.
+ *
+ * This is evidence about where the APs think they are, which is usually but
+ * not always where the operator is: a travel router, a misconfigured hotspot
+ * or a neighbour's imported hardware all lie. So the inference reports its
+ * majority and its sample size, and the operator can override it.
+ *
+ * When the evidence is thin or split it stays with the NARROWEST plan. A wrong
+ * narrow guess refuses a transmission; a wrong wide one authorises an illegal
+ * transmission, and those are not symmetric mistakes.
+ *
+ * Returns the votes for the winner, 0 when nothing claimed a domain. */
+static int infer_region(bas_region_t *out, char *cc, size_t cc_n, int *total)
+{
+    int votes[3] = { 0, 0, 0 };
+    char seen[3][3] = { { 0 }, { 0 }, { 0 } };
+    int claimed = 0;
+
+    for (uint8_t i = 0; i < s_scan.count; i++) {
+        const char *c = s_scan.ap[i].country;
+        if (c[0] == '\0') {
+            continue;
+        }
+        claimed++;
+        bas_region_t r = bas_region_from_country(c);
+        votes[r]++;
+        if (seen[r][0] == '\0') {
+            seen[r][0] = c[0]; seen[r][1] = c[1]; seen[r][2] = '\0';
+        }
+    }
+
+    if (total != NULL) { *total = claimed; }
+    if (claimed == 0) {
+        if (out != NULL) { *out = BAS_REGION_FCC; }
+        return 0;
+    }
+
+    int best = 0;
+    for (int r = 1; r < 3; r++) {
+        if (votes[r] > votes[best]) { best = r; }
+    }
+    /* A bare plurality is not enough to widen a channel plan. Require most of
+     * what was heard to agree. */
+    if (votes[best] * 2 <= claimed) {
+        if (out != NULL) { *out = BAS_REGION_FCC; }
+        return 0;
+    }
+
+    if (out != NULL) { *out = (bas_region_t)best; }
+    if (cc != NULL && cc_n >= 3u) {
+        cc[0] = seen[best][0]; cc[1] = seen[best][1]; cc[2] = '\0';
+    }
+    return votes[best];
 }
 
 /* --- runs ------------------------------------------------------------------ */
@@ -323,6 +388,8 @@ static void console_help(void)
     bas_console_reply("alarm [name]             record an alarm on the last run");
     bas_console_reply("card                     the scorecard");
     bas_console_reply("status                   where things stand");
+    bas_console_reply("cell [off]               target every client on the network");
+    bas_console_reply("region [fcc|etsi|jp]     regulatory channel clamp");
     bas_console_reply("psk [secs] [CONFIRM]     passphrase strength audit");
     bas_console_reply("blescan [off]            passive BLE device scan");
     bas_console_reply("uart [baud|off]          listen for detector alarms");
@@ -331,9 +398,10 @@ static void console_help(void)
 
 static void console_status(void)
 {
-    bas_console_reply("networks=%u locked=%d rawtx=%d log=%s rows=%u",
+    bas_console_reply("networks=%u locked=%d rawtx=%d ch<=%u log=%s rows=%u",
                       (unsigned)s_scan.count, (int)s_engage.locked,
-                      (int)bas_rawtx_available(), bas_sdlog_status(),
+                      (int)bas_rawtx_available(),
+                      (unsigned)bas_region_max_channel(), bas_sdlog_status(),
                       (unsigned)bas_sdlog_rows());
     if (s_engage.locked) {
         char mac[18];
@@ -574,6 +642,59 @@ static void console_exec(const bas_cmd_t *c)
         }
         break;
 
+    case CMD_CELL: {
+        bas_err_t rc = bas_engage_set_whole_cell(&s_engage, c->index != 0);
+        if (rc != BAS_OK) {
+            bas_console_reply("refused: %s", bas_err_str(rc));
+        } else if (c->index) {
+            bas_console_reply("whole cell: every client on %s",
+                              s_engage.target.hidden ? "(hidden)"
+                                                     : s_engage.target.ssid);
+            bas_console_reply("  scoped by BSSID — no other network is touched");
+        } else {
+            bas_console_reply("whole cell off — %u client(s) selected",
+                              (unsigned)s_engage.client_n);
+        }
+        break;
+    }
+
+    case CMD_REGION: {
+        static const char *const names[] = { "FCC", "ETSI", "JP" };
+        if (c->index == -2) {                    /* auto */
+            bas_region_t r;
+            char cc[3] = { 0 };
+            int total = 0;
+            int v = infer_region(&r, cc, sizeof(cc), &total);
+            if (v > 0) {
+                bas_region_set(r);
+                bas_console_reply("inferred %s from '%s' — %d of %d networks",
+                                  names[r], cc, v, total);
+            } else if (total > 0) {
+                bas_console_reply("evidence split across %d networks —", total);
+                bas_console_reply("  staying narrow (FCC)");
+                bas_region_set(BAS_REGION_FCC);
+            } else {
+                bas_console_reply("no network advertised a country —");
+                bas_console_reply("  staying narrow (FCC)");
+                bas_region_set(BAS_REGION_FCC);
+            }
+        } else if (c->index >= 0) {
+            bas_region_set((bas_region_t)c->index);
+        }
+        bas_region_t r = bas_region_get();
+        bas_console_reply("region %s — channels 1..%u",
+                          names[r], (unsigned)bas_region_max_channel());
+        if (c->index == -1) {
+            bas_console_reply("  'region auto|fcc|etsi|jp' to change it");
+        }
+        /* The clamp is about where the OPERATOR is, not where the target is.
+         * A neighbouring network on channel 13 is not permission to transmit
+         * there, and the device says so rather than inferring a jurisdiction
+         * from the air. */
+        bas_console_reply("  set this to where YOU are, not to reach a target");
+        break;
+    }
+
     case CMD_PSK: {
         /* Passphrase strength: capture a handshake, test it here, report the
          * finding, and wipe. Nothing crackable outlives the audit. */
@@ -607,7 +728,7 @@ static void console_exec(const bas_cmd_t *c)
              * addressed to the access point itself and disconnects nobody --
              * so it produces no reconnect and no handshake, which looks
              * exactly like a capture that failed for some deeper reason. */
-            if (!s_engage.has_client) {
+            if (s_engage.client_n == 0u) {
                 bas_console_reply("looking for a client to nudge (10s)...");
                 /* Ten seconds: a quiet network may go several
                  * seconds between data frames. */
@@ -624,7 +745,7 @@ static void console_exec(const bas_cmd_t *c)
                     vTaskDelay(pdMS_TO_TICKS(100));
                 }
             }
-            if (!s_engage.has_client) {
+            if (s_engage.client_n == 0u) {
                 /* Nothing seen talking to this AP yet. Skip the nudge rather
                  * than abort: a client may associate on its own inside the
                  * listening window, and a handshake captured passively is the
@@ -636,7 +757,7 @@ static void console_exec(const bas_cmd_t *c)
             bas_plan_default(&d, BAS_FAM_DEAUTH);
             d.seconds = 3;
             d.pps = 10;
-            if (!s_engage.has_client) { goto psk_wait; }
+            if (s_engage.client_n == 0u) { goto psk_wait; }
             bas_console_reply("nudging that client to reconnect");
             if (bas_plan_validate(&d, BAS_ROLE_ADMIN, &s_engage,
                                   now_ms()) == BAS_OK) {
@@ -950,6 +1071,21 @@ void app_main(void)
     bas_card_reset(&s_card);
     bas_engage_clear(&s_engage);
 
+    {
+        bas_region_t r;
+        char cc[3] = { 0 };
+        int total = 0;
+        int v = infer_region(&r, cc, sizeof(cc), &total);
+        if (v > 0) {
+            bas_region_set(r);
+            ESP_LOGI(TAG, "region: %s inferred from '%s' (%d of %d networks)",
+                     bas_region_name(r), cc, v, total);
+        } else {
+            ESP_LOGI(TAG, "region: %s (nothing conclusive on air, staying narrow)",
+                     bas_region_name(bas_region_get()));
+        }
+    }
+
     ESP_LOGI(TAG, "heap: %u internal, %u psram",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -1233,11 +1369,22 @@ void app_main(void)
         do_run: {
                 bas_family_t f = cur_fams[atk_sel];
                 bool aborted = false;
+                /* The operator arrives here still holding whatever completed
+                 * the arming gesture. An abort must be a NEW deliberate act,
+                 * so nothing counts until that hold has been released --
+                 * otherwise the press that armed the run is also the press
+                 * that cancels it. */
+                bool released = false;
                 for (int left = 3; left > 0 && !aborted; left--) {
                     bas_ui_arm(f, &s_engage, left);
                     for (int i = 0; i < 10; i++) {
                         uint16_t ax, ay;
-                        if (ui_tap(&ax, &ay) || input_poll() != EV_NONE) {
+                        bool touching = input_held_down();
+                        if (!touching) { released = true; }
+
+                        bool tapped = ui_tap(&ax, &ay);
+                        bool pressed = (input_poll() != EV_NONE);
+                        if (released && (tapped || pressed)) {
                             aborted = true;
                             break;
                         }
@@ -1485,27 +1632,62 @@ void app_main(void)
             break;
 
         case ST_CLIENTS: {
-            if (redraw) { bas_ui_clients(&clients, cli_sel); redraw = false; }
-            if (back) { st_cur = ST_RECON; redraw = true; break; }
-            if (next && clients.count) {
-                cli_sel = (cli_sel + 1) % (int)clients.count;
-                redraw = true;
+            int n = (int)clients.count + 1;      /* row 0 is the bulk action */
+            if (redraw) {
+                bas_ui_clients(&clients, cli_sel, &s_engage);
+                redraw = false;
             }
-            int hit = tap ? bas_ui_list_hit(tx, ty, cli_sel, clients.count) : -1;
-            if (hit >= 0) { cli_sel = hit; redraw = true; }
-            /* Narrowing to one client tightens the engagement, so it is only
-             * offered when there is an engagement to tighten. */
-            if (accept && clients.count && s_engage.locked) {
-                bas_err_t rc = bas_engage_set_client(&s_engage,
-                                                     clients.s[cli_sel].mac);
-                char mac[18];
-                bas_mac_fmt(clients.s[cli_sel].mac, mac, sizeof(mac));
-                bas_ui_note(rc == BAS_OK ? "NARROWED" : "REFUSED",
-                            rc == BAS_OK ? mac : bas_err_str(rc),
-                            rc == BAS_OK ? "runs now target this client" : NULL,
-                            rc == BAS_OK ? TH_BRASS : TH_STOP);
-                vTaskDelay(pdMS_TO_TICKS(1800));
-                st_cur = ST_RECON;
+            if (back) { st_cur = ST_RECON; redraw = true; break; }
+            if (next && n) { cli_sel = (cli_sel + 1) % n; redraw = true; }
+
+            int hit = tap ? bas_ui_list_hit(tx, ty, cli_sel, n) : -1;
+            if (hit >= 0) {
+                if (hit == cli_sel) { accept = true; }
+                else { cli_sel = hit; redraw = true; }
+            }
+
+            if (accept && clients.count > 0u) {
+                if (!s_engage.locked || !s_engage.has_target) {
+                    bas_ui_note("NO TARGET", "Lock a network first.",
+                                "Clients belong to a cell.", TH_WARN);
+                    vTaskDelay(pdMS_TO_TICKS(1800));
+                    st_cur = ST_RECON;
+                } else if (cli_sel == 0) {
+                    /* The whole cell: every station associated with THIS
+                     * network, including any that stayed silent through the
+                     * survey and never appeared in the list. Scoped by the
+                     * locked BSSID, so no other network is touched. */
+                    bool on = bas_engage_is_whole_cell(&s_engage);
+                    bas_err_t rc = bas_engage_set_whole_cell(&s_engage, !on);
+                    if (rc != BAS_OK) {
+                        bas_ui_note("REFUSED", bas_err_str(rc), NULL, TH_STOP);
+                        vTaskDelay(pdMS_TO_TICKS(1600));
+                    } else if (!on) {
+                        bas_ui_note("WHOLE NETWORK",
+                                    s_engage.target.ssid,
+                                    "every client on this cell", TH_STOP);
+                        vTaskDelay(pdMS_TO_TICKS(1600));
+                    }
+                } else if (bas_engage_is_whole_cell(&s_engage)) {
+                    /* Picking one while the cell is chosen would imply a
+                     * narrowing that is not happening. */
+                    bas_ui_note("WHOLE NETWORK",
+                                "Already covering every client.",
+                                "Untick it to choose individually.", TH_WARN);
+                    vTaskDelay(pdMS_TO_TICKS(1800));
+                } else {
+                    const uint8_t *mac = clients.s[cli_sel - 1].mac;
+                    if (bas_engage_has_client(&s_engage, mac)) {
+                        bas_engage_remove_client(&s_engage, mac);
+                    } else {
+                        bas_err_t rc = bas_engage_add_client(&s_engage, mac);
+                        if (rc != BAS_OK) {
+                            bas_ui_note("REFUSED", bas_err_str(rc), NULL,
+                                        TH_STOP);
+                            vTaskDelay(pdMS_TO_TICKS(1600));
+                        }
+                    }
+                }
                 redraw = true;
             }
             break;

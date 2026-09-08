@@ -190,3 +190,52 @@ void suite_family(void)
     CHECK_EQ(bas_plan_validate(&p, ADMIN, &e, 2000), BAS_ERR_UNKNOWN_FAMILY);
     CHECK_EQ(bas_plan_validate(NULL, ADMIN, &e, 2000), BAS_ERR_ARG);
 }
+
+void suite_region(void)
+{
+    SUITE("region: country codes map to the right channel plan");
+
+    CHECK_EQ(bas_region_from_country("US"), BAS_REGION_FCC);
+    CHECK_EQ(bas_region_from_country("CA"), BAS_REGION_FCC);
+    CHECK_EQ(bas_region_from_country("BR"), BAS_REGION_FCC);
+    CHECK_EQ(bas_region_from_country("JP"), BAS_REGION_JP);
+    CHECK_EQ(bas_region_from_country("GB"), BAS_REGION_ETSI);
+    CHECK_EQ(bas_region_from_country("DE"), BAS_REGION_ETSI);
+    CHECK_EQ(bas_region_from_country("IN"), BAS_REGION_ETSI);
+    CHECK_EQ(bas_region_from_country("AU"), BAS_REGION_ETSI);
+
+    SUITE("region: an unknown code stays narrow rather than guessing wide");
+
+    /* The two mistakes are not symmetric. Guessing narrow refuses a lawful
+     * transmission; guessing wide authorises an unlawful one. */
+    CHECK_EQ(bas_region_from_country("ZZ"), BAS_REGION_FCC);
+    CHECK_EQ(bas_region_from_country("QQ"), BAS_REGION_FCC);
+    CHECK_EQ(bas_region_from_country(""),   BAS_REGION_FCC);
+    CHECK_EQ(bas_region_from_country(NULL), BAS_REGION_FCC);
+
+    SUITE("region: the channel clamp follows the plan");
+
+    bas_region_set(BAS_REGION_FCC);
+    CHECK_EQ(bas_region_max_channel(), 11);
+    CHECK_EQ(bas_region_check_channel(11), BAS_OK);
+    CHECK_EQ(bas_region_check_channel(12), BAS_ERR_CHANNEL);
+    CHECK_EQ(bas_region_check_channel(13), BAS_ERR_CHANNEL);
+
+    bas_region_set(BAS_REGION_ETSI);
+    CHECK_EQ(bas_region_max_channel(), 13);
+    CHECK_EQ(bas_region_check_channel(13), BAS_OK);
+    CHECK_EQ(bas_region_check_channel(14), BAS_ERR_CHANNEL);
+
+    bas_region_set(BAS_REGION_JP);
+    CHECK_EQ(bas_region_max_channel(), 14);
+    CHECK_EQ(bas_region_check_channel(14), BAS_OK);
+
+    /* Channel 0 is never a channel, in any domain. */
+    CHECK_EQ(bas_region_check_channel(0), BAS_ERR_CHANNEL);
+
+    bas_region_set(BAS_REGION_FCC);
+
+    CHECK_STR(bas_region_name(BAS_REGION_FCC),  "FCC");
+    CHECK_STR(bas_region_name(BAS_REGION_ETSI), "ETSI");
+    CHECK_STR(bas_region_name(BAS_REGION_JP),   "JP");
+}

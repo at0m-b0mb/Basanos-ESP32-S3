@@ -93,7 +93,20 @@ bas_err_t bas_engage_lock_area(bas_engagement_t *e,
     return BAS_OK;
 }
 
-bas_err_t bas_engage_set_client(bas_engagement_t *e, const uint8_t mac[6])
+bool bas_engage_has_client(const bas_engagement_t *e, const uint8_t mac[6])
+{
+    if (e == NULL || mac == NULL) {
+        return false;
+    }
+    for (uint8_t i = 0; i < e->client_n; i++) {
+        if (bas_mac_eq(e->client[i], mac)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bas_err_t bas_engage_add_client(bas_engagement_t *e, const uint8_t mac[6])
 {
     if (e == NULL || mac == NULL) {
         return BAS_ERR_ARG;
@@ -108,21 +121,115 @@ bas_err_t bas_engage_set_client(bas_engagement_t *e, const uint8_t mac[6])
     if (bas_mac_is_zero(mac)) {
         return BAS_ERR_ARG;
     }
+    /* The whole point of a set is that every member is a real chosen device.
+     * A group address in it would reintroduce broadcast by the back door. */
     if (bas_mac_is_broadcast(mac)) {
         return BAS_ERR_BROADCAST;
     }
-    memcpy(e->client, mac, 6);
-    e->has_client = true;
+    /* The access point is already the default destination; listing it as a
+     * client would double it. */
+    if (bas_mac_eq(mac, e->target.bssid)) {
+        return BAS_ERR_ARG;
+    }
+    if (bas_engage_has_client(e, mac)) {
+        return BAS_OK;
+    }
+    if (e->client_n >= BAS_MAX_CLIENTS) {
+        return BAS_ERR_NO_SPACE;
+    }
+    memcpy(e->client[e->client_n], mac, 6);
+    e->client_n++;
     return BAS_OK;
 }
 
-void bas_engage_clear_client(bas_engagement_t *e)
+bas_err_t bas_engage_remove_client(bas_engagement_t *e, const uint8_t mac[6])
+{
+    if (e == NULL || mac == NULL) {
+        return BAS_ERR_ARG;
+    }
+    for (uint8_t i = 0; i < e->client_n; i++) {
+        if (bas_mac_eq(e->client[i], mac)) {
+            for (uint8_t j = i; j + 1u < e->client_n; j++) {
+                memcpy(e->client[j], e->client[j + 1], 6);
+            }
+            e->client_n--;
+            memset(e->client[e->client_n], 0, 6);
+            return BAS_OK;
+        }
+    }
+    return BAS_ERR_NO_TARGET;
+}
+
+bas_err_t bas_engage_set_client(bas_engagement_t *e, const uint8_t mac[6])
+{
+    if (e == NULL) {
+        return BAS_ERR_ARG;
+    }
+    bas_engage_clear_clients(e);
+    return bas_engage_add_client(e, mac);
+}
+
+void bas_engage_clear_clients(bas_engagement_t *e)
 {
     if (e == NULL) {
         return;
     }
-    e->has_client = false;
+    e->client_n = 0;
     memset(e->client, 0, sizeof(e->client));
+}
+
+bas_err_t bas_engage_set_whole_cell(bas_engagement_t *e, bool on)
+{
+    if (e == NULL) {
+        return BAS_ERR_ARG;
+    }
+    if (!e->locked) {
+        return BAS_ERR_NOT_LOCKED;
+    }
+    if (on && !e->has_target) {
+        /* A broadcast frame is scoped by the BSSID it carries. Without a
+         * target there is no BSSID, so there is no cell to address and the
+         * frame would be the untargeted one this device will not send. */
+        return BAS_ERR_NO_TARGET;
+    }
+    if (on) {
+        /* The two are alternatives, not layers: a broadcast already reaches
+         * every station in the cell, so a client list alongside it would be
+         * decoration that implies a narrowing which is not happening. */
+        bas_engage_clear_clients(e);
+    }
+    e->whole_cell = on;
+    return BAS_OK;
+}
+
+bool bas_engage_is_whole_cell(const bas_engagement_t *e)
+{
+    return e != NULL && e->whole_cell;
+}
+
+uint8_t bas_engage_dest_count(const bas_engagement_t *e)
+{
+    if (e == NULL || !e->locked || !e->has_target) {
+        return 0u;
+    }
+    /* With nothing selected the access point is the only destination -- an
+     * un-narrowed engagement still cannot spray the clients of a cell. */
+    return (e->client_n > 0u) ? e->client_n : 1u;
+}
+
+const uint8_t *bas_engage_dest(const bas_engagement_t *e, uint32_t n)
+{
+    if (e == NULL || !e->locked || !e->has_target) {
+        return NULL;
+    }
+    if (e->whole_cell) {
+        static const uint8_t bcast[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
+        return bcast;
+    }
+    if (e->client_n == 0u) {
+        return e->target.bssid;
+    }
+    return e->client[n % e->client_n];
 }
 
 bas_err_t bas_engage_check(const bas_engagement_t *e, uint32_t now_ms)
@@ -172,25 +279,34 @@ bas_err_t bas_engage_permits_frame(const bas_engagement_t *e,
         return BAS_ERR_NO_TARGET;
     }
 
-    /* Refuse the group bit before anything else. This is the single check that
-     * separates Basanos from every "deauthall" on GitHub, so it does not sit
-     * behind a role, a setting, or a build flag. */
+    /* The BSSID is what scopes a frame, so it is checked first and always.
+     * A broadcast frame carrying the locked target's BSSID reaches that cell
+     * and no other; one carrying any other BSSID is the untargeted sweep this
+     * device will not send, and no mode enables it. */
+    if (!bas_mac_eq(bssid, e->target.bssid)) {
+        return BAS_ERR_NO_TARGET;
+    }
+
     if (bas_mac_is_broadcast(dest)) {
-        return BAS_ERR_BROADCAST;
+        /* Deliberate, per-engagement, and never the default. */
+        if (!e->whole_cell) {
+            return BAS_ERR_BROADCAST;
+        }
+        return BAS_OK;
     }
     if (bas_mac_is_zero(dest)) {
         return BAS_ERR_ARG;
     }
 
-    if (!bas_mac_eq(bssid, e->target.bssid)) {
-        return BAS_ERR_NO_TARGET;
-    }
-
     /* With a client selected, the only legal destinations are that client and
      * the AP itself. Without one, the AP is the only legal destination — an
      * un-narrowed engagement still cannot spray the clients of a BSS. */
-    if (e->has_client) {
-        if (!bas_mac_eq(dest, e->client) && !bas_mac_eq(dest, e->target.bssid)) {
+    /* With clients selected, the legal destinations are those clients and the
+     * access point. Without any, the access point alone. Either way every
+     * frame is addressed to something the operator chose. */
+    if (e->client_n > 0u) {
+        if (!bas_engage_has_client(e, dest) &&
+            !bas_mac_eq(dest, e->target.bssid)) {
             return BAS_ERR_NO_TARGET;
         }
     } else if (!bas_mac_eq(dest, e->target.bssid)) {

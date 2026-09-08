@@ -119,6 +119,14 @@ bas_region_t bas_region_get(void);
 uint8_t bas_region_max_channel(void);
 bas_err_t bas_region_check_channel(uint8_t ch);
 
+/* Map a two-letter country code to the domain whose channel rules apply.
+ *
+ * Unknown codes return FCC, which is the NARROWEST 2.4 GHz plan (1..11) and
+ * therefore the safe answer when the evidence is thin: guessing wide would
+ * authorise a transmission that guessing narrow merely refuses. */
+bas_region_t bas_region_from_country(const char *cc);
+const char  *bas_region_name(bas_region_t r);
+
 /* The prefix every SSID and BLE name Basanos invents must carry, so anyone
  * else sniffing the room sees a test rig and not an attack. Enforced by
  * bas_family_label_ok(). */

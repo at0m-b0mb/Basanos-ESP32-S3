@@ -138,8 +138,12 @@ void bas_sdlog_run(const bas_engagement_t *e, bas_family_t f,
                                                       : "(hidden)");
     safe(note_s, sizeof(note_s), note);
     bas_mac_fmt(e ? e->target.bssid : NULL, bssid, sizeof(bssid));
-    if (e != NULL && e->has_client) {
-        bas_mac_fmt(e->client, client, sizeof(client));
+    if (e != NULL && e->client_n == 1u) {
+        bas_mac_fmt(e->client[0], client, sizeof(client));
+    } else if (e != NULL && e->client_n > 1u) {
+        /* The count goes in the row; the addresses go in the note, because a
+         * report has to be able to name which devices were affected. */
+        snprintf(client, sizeof(client), "%u selected", (unsigned)e->client_n);
     } else {
         snprintf(client, sizeof(client), "-");
     }

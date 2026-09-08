@@ -46,6 +46,9 @@ typedef struct {
     bool      hidden;
     uint32_t  first_seen_ms;
     uint32_t  last_seen_ms;
+    /* The regulatory domain this AP claims, from its Country element. Empty
+     * when it advertises none, which many consumer APs do not. */
+    char      country[3];
 } bas_ap_t;
 
 #define BAS_MAX_APS 48

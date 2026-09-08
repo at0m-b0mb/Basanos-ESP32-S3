@@ -42,8 +42,30 @@ a formality you can switch off in a menu.
 
 ### Manual targeting, and nothing else
 
-You scan, you look at the list, you choose **one access point**. Optionally you
-narrow further to **one client**.
+You scan, you look at the list, you choose **one access point**. Then you
+choose what inside it a run may address:
+
+| Destination | Reaches |
+|---|---|
+| the access point | the AP alone — the default, and the narrowest |
+| selected clients | only the stations you ticked, one frame each in turn |
+| whole network | every station associated with that cell |
+
+**Whole network is a broadcast, and it is scoped by BSSID rather than by
+address.** A deauthentication frame carries the BSSID in addresses 2 and 3, and
+a station acts on it only when it is associated with *that* cell — a device on
+a neighbouring network ignores it entirely. It exists because a client that
+stayed silent through the survey never appears in the station list, and an
+assessment that can only reach enumerated clients has a blind spot it cannot
+see.
+
+A broadcast carrying **any other BSSID** is refused, in every mode. That is the
+untargeted sweep this device will not send, and it is asserted rather than
+promised:
+
+```c
+CHECK_EQ(bas_engage_permits_frame(&e, bcast, other, 2000), BAS_ERR_NO_TARGET);
+```
 
 There is no "all", no wildcard, and no broadcast mode. This is enforced in the
 type system rather than the menu: `bas_ap_check()` refuses any BSSID carrying

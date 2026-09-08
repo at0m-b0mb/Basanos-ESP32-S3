@@ -169,6 +169,57 @@ bas_err_t bas_region_check_channel(uint8_t ch)
     return BAS_OK;
 }
 
+const char *bas_region_name(bas_region_t r)
+{
+    switch (r) {
+    case BAS_REGION_ETSI: return "ETSI";
+    case BAS_REGION_JP:   return "JP";
+    case BAS_REGION_FCC:
+    default:              return "FCC";
+    }
+}
+
+bas_region_t bas_region_from_country(const char *cc)
+{
+    if (cc == NULL || cc[0] == '\0') {
+        return BAS_REGION_FCC;
+    }
+
+    /* Japan is the only 2.4 GHz plan that reaches channel 14. */
+    if (cc[0] == 'J' && cc[1] == 'P') {
+        return BAS_REGION_JP;
+    }
+
+    /* The FCC plan (1..11) covers the Americas and the countries that adopted
+     * it. Everything else in common use runs 1..13. */
+    static const char *const fcc[] = {
+        "US", "CA", "MX", "BR", "CO", "AR", "CL", "PE", "VE", "DO",
+        "GT", "CR", "PA", "TW", "PH", NULL
+    };
+    for (int i = 0; fcc[i] != NULL; i++) {
+        if (cc[0] == fcc[i][0] && cc[1] == fcc[i][1]) {
+            return BAS_REGION_FCC;
+        }
+    }
+
+    /* A two-letter code we recognise as a country but not as FCC or JP is
+     * almost certainly a 1..13 domain. Anything unrecognised falls through to
+     * the narrow default rather than being assumed wide. */
+    static const char *const etsi[] = {
+        "GB", "IE", "FR", "DE", "ES", "IT", "PT", "NL", "BE", "LU",
+        "AT", "CH", "SE", "NO", "DK", "FI", "IS", "PL", "CZ", "SK",
+        "HU", "RO", "BG", "GR", "HR", "SI", "EE", "LV", "LT", "CY",
+        "MT", "IN", "CN", "AU", "NZ", "ZA", "AE", "SA", "IL", "TR",
+        "RU", "UA", "KR", "SG", "MY", "TH", "ID", "VN", "HK", NULL
+    };
+    for (int i = 0; etsi[i] != NULL; i++) {
+        if (cc[0] == etsi[i][0] && cc[1] == etsi[i][1]) {
+            return BAS_REGION_ETSI;
+        }
+    }
+    return BAS_REGION_FCC;
+}
+
 bool bas_family_label_ok(const char *ssid)
 {
     if (ssid == NULL) {
@@ -212,7 +263,7 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
              * network, so every family that addresses one is refused. */
             return BAS_ERR_NO_TARGET;
         }
-        if (s->needs_client && !e->has_client) {
+        if (s->needs_client && e->client_n == 0u) {
             return BAS_ERR_NO_TARGET;
         }
     }
