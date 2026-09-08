@@ -1325,17 +1325,34 @@ void app_main(void)
                 bas_ui_attack(f, &probe, &s_engage, gate);
                 redraw = false;
             }
-            if (back) { st_cur = ST_ATTACKS; redraw = true; break; }
-            if ((tap || accept) && gate == BAS_OK && bas_tx_supported(f)) {
+            bool ready = (gate == BAS_OK) && bas_tx_supported(f);
+
+            /* A disruptive family arms on the PRESS, not on the release.
+             *
+             * The footer asks for a hold, so the operator holds -- and a hold
+             * on this screen used to reach 600 ms and fire BACK, throwing them
+             * out to the list before the arming screen ever appeared. Touch hid
+             * the bug completely, because a tap registers on finger-down and so
+             * arrived at the hold screen immediately.
+             *
+             * Entering on the press makes press-and-hold one continuous
+             * gesture across both screens, which is what the footer describes.
+             * BACK cannot fire here because the transition happens well inside
+             * its 600 ms threshold. */
+            if (ready && fs->klass == BAS_CLASS_DISRUPTIVE && input_held_down()) {
                 plan = probe;
-                if (fs->klass == BAS_CLASS_DISRUPTIVE) {
-                    hold_start = 0;
-                    st_cur = ST_HOLD;
-                } else {
-                    role = BAS_ROLE_OPERATOR;
-                    goto do_run;
-                }
+                hold_start = 0;
+                st_cur = ST_HOLD;
                 redraw = true;
+                break;
+            }
+
+            if (back) { st_cur = ST_ATTACKS; redraw = true; break; }
+
+            if ((tap || accept) && ready) {
+                plan = probe;
+                role = BAS_ROLE_OPERATOR;
+                goto do_run;
             }
             break;
         }

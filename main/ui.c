@@ -557,8 +557,9 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
             bas_text(c, TH_PAD, 174, "clamped to the family ceiling", TH_WARN, 1);
         }
         bas_text_clip(c, TH_PAD, 190, e->label, TH_BRASS, 1, W - 2 * TH_PAD);
-        foot(c, s->klass == BAS_CLASS_DISRUPTIVE ? "LEFT to hold-arm"
-                                                 : "LEFT to arm");
+        foot(c, s->klass == BAS_CLASS_DISRUPTIVE
+                    ? "hold LEFT to arm   release cancels"
+                    : "LEFT to arm");
     }
     bas_display_flush();
 }
