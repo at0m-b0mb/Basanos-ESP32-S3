@@ -386,7 +386,8 @@ static const bas_family_t WIFI_FAMS[] = {
 #define WIFI_FAM_N ((int)(sizeof(WIFI_FAMS) / sizeof(WIFI_FAMS[0])))
 
 static const bas_family_t BLE_FAMS[] = {
-    BAS_FAM_BLE_ADV, BAS_FAM_BLE_TRACKER,
+    BAS_FAM_BLE_ADV, BAS_FAM_BLE_NAMES, BAS_FAM_BLE_BEACON,
+    BAS_FAM_BLE_TRACKER, BAS_FAM_BLE_SWARM, BAS_FAM_BLE_PERIPHERAL,
 };
 #define BLE_FAM_N ((int)(sizeof(BLE_FAMS) / sizeof(BLE_FAMS[0])))
 
@@ -398,6 +399,7 @@ static void console_help(void)
 {
     bas_console_reply("scan                     re-survey the band");
     bas_console_reply("list                     networks, with index");
+    bas_console_reply("wps                      WPS exposure survey (passive)");
     bas_console_reply("lock <idx> <label>       lock an engagement");
     bas_console_reply("unlock                   drop it");
     bas_console_reply("fams                     families, with index");
@@ -469,6 +471,117 @@ static void console_fams(void)
                           bas_tx_supported((bas_family_t)i)
                               ? f->detector
                               : bas_tx_pending_reason((bas_family_t)i));
+    }
+}
+
+/* The WPS survey.
+ *
+ * This is the cheapest finding the instrument produces and often the most
+ * serious one. Everything it prints was already in the beacons received
+ * during an ordinary scan -- no frame is transmitted to produce this report,
+ * which is why it is safe to run before an engagement is even locked.
+ *
+ * What it deliberately does not do is recover the PIN or the passphrase. The
+ * remediation for every line below is the same sentence -- "turn WPS off" --
+ * and knowing the credential does not change it. */
+static void console_wps(void)
+{
+    if (s_scan.count == 0) {
+        bas_console_reply("no networks — 'scan' first");
+        return;
+    }
+
+    unsigned exposed = 0, locked = 0, none = 0;
+
+    bas_console_reply("WPS survey — %u network(s), nothing transmitted",
+                      (unsigned)s_scan.count);
+
+    for (unsigned i = 0; i < s_scan.count; i++) {
+        const bas_ap_t *a = &s_scan.ap[i];
+        bas_wps_risk_t r = bas_wps_grade(&a->wps);
+
+        if (r == BAS_WPS_NONE) {
+            none++;
+            continue;
+        }
+        if (r == BAS_WPS_LOCKED) {
+            locked++;
+        } else {
+            exposed++;
+        }
+
+        bas_console_reply("");
+        bas_console_reply("[%u] %-20s ch%-2u %ddBm  %s",
+                          i,
+                          a->hidden ? "(hidden)" : a->ssid,
+                          (unsigned)a->channel, (int)a->rssi,
+                          bas_wps_risk_name(r));
+        bas_console_reply("    %02X:%02X:%02X:%02X:%02X:%02X  %s",
+                          a->bssid[0], a->bssid[1], a->bssid[2],
+                          a->bssid[3], a->bssid[4], a->bssid[5],
+                          bas_sec_name(a->sec));
+
+        /* The methods matter to a report: "Label" is a PIN printed on the
+         * sticker, which never changes and cannot be rotated by the owner. */
+        if (a->wps.config_methods != 0u) {
+            char m[72];
+            size_t n = 0;
+            m[0] = '\0';
+            static const struct { uint16_t bit; const char *name; } k[] = {
+                { BAS_WPS_CM_LABEL,   "Label"    },
+                { BAS_WPS_CM_DISPLAY, "Display"  },
+                { BAS_WPS_CM_KEYPAD,  "Keypad"   },
+                { BAS_WPS_CM_PBC,     "PushBtn"  },
+                { BAS_WPS_CM_EXT_NFC, "NFC"      },
+            };
+            for (size_t j = 0; j < sizeof(k) / sizeof(k[0]); j++) {
+                if ((a->wps.config_methods & k[j].bit) == 0u) {
+                    continue;
+                }
+                int w = snprintf(m + n, sizeof(m) - n, "%s%s",
+                                 (n != 0u) ? " " : "", k[j].name);
+                if (w <= 0 || (size_t)w >= sizeof(m) - n) {
+                    break;
+                }
+                n += (size_t)w;
+            }
+            bas_console_reply("    methods: %s", m);
+        }
+
+        if (a->wps.manufacturer[0] != '\0' || a->wps.model[0] != '\0') {
+            bas_console_reply("    device:  %s %s",
+                              a->wps.manufacturer, a->wps.model);
+        }
+
+        bas_console_reply("    %s", bas_wps_advice(r));
+
+        if (r != BAS_WPS_LOCKED && bas_wps_vendor_suspect(&a->wps)) {
+            /* Deliberately hedged. The vendor string is chosen by the firmware
+             * author, several of these vendors ship more than one chipset, and
+             * a rebadged box may name a company that never made its radio. A
+             * report that states this as fact will be wrong in public. */
+            bas_console_reply("    note: this vendor has shipped chipsets with "
+                              "predictable registrar");
+            bas_console_reply("          nonces (offline PIN recovery). The "
+                              "NAME is weak evidence —");
+            bas_console_reply("          only an M1 exchange would establish "
+                              "it.");
+        }
+    }
+
+    bas_console_reply("");
+    if (exposed == 0u) {
+        bas_console_reply("%u exposed, %u locked, %u without WPS",
+                          exposed, locked, none);
+        /* Not the same claim as "these networks are secure", and it must not
+         * be allowed to read as one. */
+        bas_console_reply("no WPS exposure in what was heard — other findings "
+                          "are unaffected");
+    } else {
+        bas_console_reply("%u EXPOSED, %u locked, %u without WPS",
+                          exposed, locked, none);
+        bas_console_reply("an exposed PIN method yields the passphrase. "
+                          "Basanos reports it and stops there.");
     }
 }
 
@@ -614,6 +727,7 @@ static void console_exec(const bas_cmd_t *c)
     case CMD_LIST:   console_list();   break;
     case CMD_FAMS:   console_fams();   break;
     case CMD_CARD:   console_card();   break;
+    case CMD_WPS:    console_wps();    break;
     case CMD_ABORT:  s_abort = true; bas_console_reply("abort set"); break;
     case CMD_RUN:    console_run(c);   break;
 

@@ -10,6 +10,7 @@
 #define BASANOS_TARGET_H
 
 #include "basanos/basanos.h"
+#include "basanos/wps_fwd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,13 @@ typedef struct {
     /* The regulatory domain this AP claims, from its Country element. Empty
      * when it advertises none, which many consumer APs do not. */
     char      country[3];
+    /* Wi-Fi Protected Setup, read straight from the beacon.
+     *
+     * This rides on the scan entry rather than being looked up later because
+     * the whole value of the finding is that it costs nothing: by the time an
+     * AP is in this list, everything needed to grade its WPS exposure has
+     * already been received. Nothing is transmitted to learn it. */
+    bas_wps_t wps;
 } bas_ap_t;
 
 #define BAS_MAX_APS 48

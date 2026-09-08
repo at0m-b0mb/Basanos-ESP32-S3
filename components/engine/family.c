@@ -29,6 +29,39 @@ static const bas_family_spec_t k_fam[BAS_FAM__COUNT] = {
         .klass = BAS_CLASS_BENIGN, .needs_target = false, .needs_client = false,
         .default_pps = 2, .max_pps = 10, .max_seconds = 300, .min_role = ROLE_OPERATOR,
     },
+    [BAS_FAM_BLE_NAMES] = {
+        .name = "BLE name churn", .detector = "Echo, Aegis BLE",
+        .proves = "Name-based fingerprinting is not a stable identity",
+        /* One address, many names -- the mirror image of advert spam. A
+         * detector keying on the name sees a crowd; one keying on the address
+         * sees a single device. Which it reports is the finding. */
+        .klass = BAS_CLASS_BENIGN, .needs_target = false, .needs_client = false,
+        .default_pps = 10, .max_pps = 50, .max_seconds = 60, .min_role = ROLE_OPERATOR,
+    },
+    [BAS_FAM_BLE_BEACON] = {
+        .name = "BLE proximity beacon", .detector = "Aegis BLE, Skimscan",
+        .proves = "Beacon-format payloads are parsed, not just counted",
+        .klass = BAS_CLASS_BENIGN, .needs_target = false, .needs_client = false,
+        .default_pps = 10, .max_pps = 50, .max_seconds = 60, .min_role = ROLE_OPERATOR,
+    },
+    [BAS_FAM_BLE_SWARM] = {
+        .name = "BLE tracker swarm", .detector = "GhostTag, Aegis tracker",
+        .proves = "Dwell scoring holds up with several followers at once",
+        /* Tracker dwell with one identity asks whether a follower is seen at
+         * all. A swarm asks whether the logic still separates followers from
+         * furniture when the room is busy -- a different question, and the one
+         * a real environment poses. */
+        .klass = BAS_CLASS_BENIGN, .needs_target = false, .needs_client = false,
+        .default_pps = 4, .max_pps = 20, .max_seconds = 300, .min_role = ROLE_OPERATOR,
+    },
+    [BAS_FAM_BLE_PERIPHERAL] = {
+        .name = "BLE rogue peripheral", .detector = "Aegis BLE",
+        .proves = "A connectable device appearing where none belongs is noticed",
+        /* Active rather than benign: it accepts connections, which is a
+         * change to the environment rather than an observation of it. */
+        .klass = BAS_CLASS_ACTIVE, .needs_target = false, .needs_client = false,
+        .default_pps = 2, .max_pps = 10, .max_seconds = 120, .min_role = ROLE_OPERATOR,
+    },
     [BAS_FAM_HID_TIMING] = {
         .name = "HID keystroke timing", .detector = "DuckHound",
         .proves = "How fast the timing engine calls an injection",

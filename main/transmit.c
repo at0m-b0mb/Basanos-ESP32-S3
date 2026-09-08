@@ -27,6 +27,10 @@ bool bas_tx_supported(bas_family_t f)
     case BAS_FAM_PMKID:
     case BAS_FAM_BLE_ADV:
     case BAS_FAM_BLE_TRACKER:
+    case BAS_FAM_BLE_NAMES:
+    case BAS_FAM_BLE_BEACON:
+    case BAS_FAM_BLE_SWARM:
+    case BAS_FAM_BLE_PERIPHERAL:
     case BAS_FAM_ASSOC_FLOOD:
         /* Association requests are ordinary frames the library does not
          * refuse, so this family works with or without the bypass. */
@@ -231,7 +235,30 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
     }
     bas_ble_reset_count();
 
-    bool spam = (p->fam == BAS_FAM_BLE_ADV);
+    /* What varies between the BLE families is the SHAPE of what goes out and
+     * what stays constant across it -- not the rate. That is the whole reason
+     * they are separate families rather than one with a knob. */
+    const bas_family_t fam = p->fam;
+    bas_adv_shape_t shape =
+        (fam == BAS_FAM_BLE_BEACON)     ? BAS_ADV_BEACON :
+        (fam == BAS_FAM_BLE_PERIPHERAL) ? BAS_ADV_CONNECTABLE :
+                                          BAS_ADV_NAME;
+
+    /* Does the identity change between advertisements? */
+    const bool rotate_addr = (fam == BAS_FAM_BLE_ADV) ||
+                             (fam == BAS_FAM_BLE_BEACON) ||
+                             (fam == BAS_FAM_BLE_SWARM);
+    /* Does the NAME change while the address holds still? */
+    const bool rotate_name = (fam == BAS_FAM_BLE_NAMES);
+    /* Or is one identity held for the whole window? */
+    const bool persistent  = (fam == BAS_FAM_BLE_TRACKER) ||
+                             (fam == BAS_FAM_BLE_PERIPHERAL);
+
+    /* A swarm is a small fixed cast that keeps reappearing, not an endless
+     * stream of strangers: dwell scoring only means something if the same
+     * identities come back. */
+    const uint32_t SWARM_SIZE = 5u;
+
     const bool     forever  = p->continuous;
     const uint32_t start    = now_ms();
     const uint32_t deadline = start + (uint32_t)p->seconds * 1000u;
@@ -239,33 +266,29 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
     const uint32_t total    = bas_plan_frame_budget(p);
 
     if (forever) {
-        ESP_LOGI(TAG, "ble %s: continuous until stopped",
-                 spam ? "advert spam" : "tracker dwell");
+        ESP_LOGI(TAG, "ble %s: continuous until stopped", bas_family(fam)->name);
     } else {
-        ESP_LOGI(TAG, "ble %s: %u identities over %us",
-                 spam ? "advert spam" : "tracker dwell",
-                 (unsigned)(spam ? total : 1u), (unsigned)p->seconds);
+        ESP_LOGI(TAG, "ble %s: %us", bas_family(fam)->name,
+                 (unsigned)p->seconds);
     }
 
     uint32_t seed = 0;
     uint32_t last_tick = start;
 
-    /* The tracker family is one identity held for the whole window; the spam
-     * family is a new identity every period. That single difference is what
-     * the two detectors are scored on. */
-    if (!spam) {
+    /* The persistent shapes advertise once and hold. Everything the detector
+     * is being asked about is in that constancy, so re-advertising would
+     * destroy the measurement. */
+    if (persistent) {
         char name[24];
-        snprintf(name, sizeof(name), BAS_TEST_PREFIX "TRK");
-        if (bas_ble_advertise(name, 0x7ACu) == ESP_OK) {
+        snprintf(name, sizeof(name), BAS_TEST_PREFIX "%s",
+                 (fam == BAS_FAM_BLE_PERIPHERAL) ? "PERIPH" : "TRK");
+        if (bas_ble_advertise_as(name, 0x7ACu, shape) == ESP_OK) {
             r.frames_sent++;
         } else {
             r.tx_errors++;
         }
     }
 
-    /* Same rule as the 802.11 families: continuous means until stopped or
-     * until the engagement ends, and the engagement is what actually bounds
-     * it -- checked here, every pass. */
     while (forever || now_ms() < deadline) {
         uint32_t t = now_ms();
 
@@ -275,11 +298,29 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
             break;
         }
 
-        if (spam && (forever || r.frames_sent < total)) {
+        if (!persistent && (forever || r.frames_sent < total)) {
             char name[24];
-            snprintf(name, sizeof(name), BAS_TEST_PREFIX "%02u",
-                     (unsigned)(seed % 100u));
-            if (bas_ble_advertise(name, seed) == ESP_OK) {
+            uint32_t id;
+
+            if (rotate_name) {
+                /* One address, a churn of names. A detector keying on the
+                 * name sees a crowd; one keying on the address sees a single
+                 * device. Which it reports is the finding. */
+                id = 0x1Du;
+                snprintf(name, sizeof(name), BAS_TEST_PREFIX "N%03u",
+                         (unsigned)(seed % 1000u));
+            } else if (fam == BAS_FAM_BLE_SWARM) {
+                id = seed % SWARM_SIZE;
+                snprintf(name, sizeof(name), BAS_TEST_PREFIX "TRK%u",
+                         (unsigned)id);
+            } else {
+                id = seed;
+                snprintf(name, sizeof(name), BAS_TEST_PREFIX "%02u",
+                         (unsigned)(seed % 100u));
+            }
+            (void)rotate_addr;
+
+            if (bas_ble_advertise_as(name, id, shape) == ESP_OK) {
                 r.frames_sent++;
             } else {
                 r.tx_errors++;
@@ -294,7 +335,8 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
                 break;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(spam ? (period > 0u ? period : 1u) : 100u));
+        vTaskDelay(pdMS_TO_TICKS(persistent ? 100u
+                                            : (period > 0u ? period : 1u)));
     }
 
     bas_ble_stop();
@@ -338,7 +380,9 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
      * selection, the frame builders and the frame gate -- which is correct:
      * an advertisement has no destination to gate. They keep the engagement
      * check, the ceilings and the role. */
-    if (p.fam == BAS_FAM_BLE_ADV || p.fam == BAS_FAM_BLE_TRACKER) {
+    if (p.fam == BAS_FAM_BLE_ADV      || p.fam == BAS_FAM_BLE_TRACKER ||
+        p.fam == BAS_FAM_BLE_NAMES    || p.fam == BAS_FAM_BLE_BEACON  ||
+        p.fam == BAS_FAM_BLE_SWARM    || p.fam == BAS_FAM_BLE_PERIPHERAL) {
         return bas_tx_run_ble(&p, e, tick, ctx, out);
     }
     if (p.fam == BAS_FAM_PMKID) {

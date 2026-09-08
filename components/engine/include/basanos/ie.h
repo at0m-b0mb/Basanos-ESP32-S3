@@ -68,6 +68,46 @@ bas_sec_t bas_ie_classify(const bas_posture_t *p, bool privacy_bit);
  * The UI says so before the operator spends a run on it. */
 bool bas_posture_deauth_resistant(const bas_posture_t *p);
 
+/* --- WPS -------------------------------------------------------------------
+
+   Wi-Fi Protected Setup is the highest-value finding a passive survey can
+   produce. An access point with WPS enabled and unlocked, advertising a PIN
+   method, is exposed to an online PIN attack -- and on many chipsets to the
+   offline Pixie Dust attack, which recovers the PIN in seconds because the
+   registrar's nonces are predictable. Either yields the network passphrase.
+
+   Everything below is read from the beacon. That matters: the finding is
+   available without touching the AP at all, which makes it the cheapest and
+   safest thing in the catalogue to check.
+
+   What this does NOT do is recover the PIN or the passphrase. The finding a
+   report needs is "WPS is enabled and exploitable, disable it" -- the
+   credential adds nothing to that recommendation and creates custody of a key
+   the engagement has no reason to hold.
+   ------------------------------------------------------------------------- */
+
+/* The finding type itself lives in wps_fwd.h, because a scan entry
+   carries one and ie.h includes target.h. */
+
+const char *bas_wps_risk_name(bas_wps_risk_t r);
+
+/* One line an operator can act on, and a report can quote. */
+const char *bas_wps_advice(bas_wps_risk_t r);
+
+bas_wps_risk_t bas_wps_grade(const bas_wps_t *w);
+
+/* True for the chipset vendors with documented weak registrar nonce
+ * generation -- the Pixie Dust family.
+ *
+ * A NAME is weak evidence and this says so: the vendor string is chosen by the
+ * firmware author, several vendors ship more than one chipset, and a rebadged
+ * device may name a company that never made its radio. It raises suspicion; it
+ * does not establish the vulnerability, and only an M1 exchange would. */
+bool bas_wps_vendor_suspect(const bas_wps_t *w);
+
+/* Parse the WPS vendor element out of a beacon's tagged parameters. */
+bas_err_t bas_wps_parse(const uint8_t *ies, size_t len, bas_wps_t *out);
+
 #ifdef __cplusplus
 }
 #endif

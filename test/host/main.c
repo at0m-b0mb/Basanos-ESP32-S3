@@ -16,13 +16,13 @@ int main(void)
     suite_engage_whole_cell();
     suite_family();
     suite_region();
-    suite_region();
-    suite_region();
     suite_rbac();
     suite_wpa();
     suite_score();
     suite_station();
     suite_ie();
+    suite_wps();
+    suite_wpspin();
     suite_survey();
     suite_alarm();
 

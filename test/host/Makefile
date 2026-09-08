@@ -24,6 +24,7 @@ SRC := $(ENGINE)/basanos.c \
        $(ENGINE)/family.c \
        $(ENGINE)/station.c \
        $(ENGINE)/ie.c \
+       $(ENGINE)/wpspin.c \
        $(ENGINE)/survey.c \
        $(RBAC)/sha256.c \
        $(RBAC)/rbac.c \
@@ -41,6 +42,8 @@ TESTS := main.c \
          test_score.c \
          test_station.c \
          test_ie.c \
+         test_wps.c \
+         test_wpspin.c \
          test_survey.c \
          test_alarm.c
 

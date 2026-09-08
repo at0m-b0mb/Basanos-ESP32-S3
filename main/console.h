@@ -48,6 +48,7 @@ typedef enum {
     CMD_REGION,
     CMD_CELL,
     CMD_BG,
+    CMD_WPS,
 } bas_cmd_kind_t;
 
 typedef struct {

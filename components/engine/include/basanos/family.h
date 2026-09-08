@@ -35,6 +35,10 @@ typedef enum {
     BAS_FAM_PROBE_REQ = 0,   /* probe requests naming chosen SSIDs          */
     BAS_FAM_BLE_ADV,         /* BLE advertisements, distinct addresses      */
     BAS_FAM_BLE_TRACKER,     /* one persistent BLE address, dwelling        */
+    BAS_FAM_BLE_NAMES,       /* one address, a churn of names               */
+    BAS_FAM_BLE_BEACON,      /* proximity-beacon shaped payloads            */
+    BAS_FAM_BLE_SWARM,       /* many persistent identities at once          */
+    BAS_FAM_BLE_PERIPHERAL,  /* a connectable device where none belongs     */
     BAS_FAM_HID_TIMING,      /* USB HID keystroke timing profile            */
 
     /* --- active: visible on air, aimed at the locked target ------------- */

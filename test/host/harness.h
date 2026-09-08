@@ -53,6 +53,8 @@ void suite_wpa(void);
 void suite_score(void);
 void suite_station(void);
 void suite_ie(void);
+void suite_wps(void);
+void suite_wpspin(void);
 void suite_survey(void);
 void suite_alarm(void);
 

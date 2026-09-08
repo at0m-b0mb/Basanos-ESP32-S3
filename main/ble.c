@@ -316,6 +316,12 @@ esp_err_t bas_ble_stop(void)
 
 esp_err_t bas_ble_advertise(const char *name, uint32_t seed)
 {
+    return bas_ble_advertise_as(name, seed, BAS_ADV_NAME);
+}
+
+esp_err_t bas_ble_advertise_as(const char *name, uint32_t seed,
+                               bas_adv_shape_t shape)
+{
     if (!bas_ble_ready()) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -368,6 +374,48 @@ esp_err_t bas_ble_advertise(const char *name, uint32_t seed)
     fields.name_len = (uint8_t)strlen(name);
     fields.name_is_complete = 1;
 
+    /* Company id 0xFFFF is reserved by the SIG for testing. A well-formed
+     * manufacturer payload that belongs to nobody. */
+    static uint8_t mfr[25];
+    static ble_uuid16_t svc16;
+
+    if (shape == BAS_ADV_BEACON) {
+        /* An advertisement is 31 bytes. Flags take 3, a 25-byte manufacturer
+         * payload takes 27, and a name would take a dozen more -- the host
+         * rejects the whole frame and nothing goes out. A real proximity
+         * beacon carries no name either, so dropping it is the authentic
+         * shape as well as the one that fits. */
+        fields.name = NULL;
+        fields.name_len = 0;
+        fields.name_is_complete = 0;
+
+        /* Proximity-beacon shape: company, type, length, a 16-byte identifier,
+         * major, minor, measured power. The identifier is derived from the
+         * seed rather than copied from anyone. */
+        mfr[0] = (uint8_t)(BAS_BLE_TEST_COMPANY & 0xFFu);
+        mfr[1] = (uint8_t)(BAS_BLE_TEST_COMPANY >> 8);
+        mfr[2] = 0x02;                 /* beacon type    */
+        mfr[3] = 0x15;                 /* 21 bytes follow */
+        for (int i = 0; i < 16; i++) {
+            mfr[4 + i] = (uint8_t)((h >> ((i % 4) * 8)) ^ (0xA5u + i));
+        }
+        mfr[20] = (uint8_t)(seed >> 8);   /* major */
+        mfr[21] = (uint8_t)(seed);
+        mfr[22] = (uint8_t)(seed >> 16);  /* minor */
+        mfr[23] = (uint8_t)(seed >> 24);
+        mfr[24] = 0xC5;                   /* measured power */
+        fields.mfg_data     = mfr;
+        fields.mfg_data_len = 25;
+    } else if (shape == BAS_ADV_SERVICE) {
+        /* 0xFFF0 sits in the range vendors use for private services, so it
+         * reads as a real service to a scanner without claiming a registered
+         * one. */
+        svc16 = (ble_uuid16_t)BLE_UUID16_INIT(0xFFF0);
+        fields.uuids16 = &svc16;
+        fields.num_uuids16 = 1;
+        fields.uuids16_is_complete = 1;
+    }
+
     rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0) {
         ESP_LOGW(TAG, "adv_set_fields: %d", rc);
@@ -376,9 +424,16 @@ esp_err_t bas_ble_advertise(const char *name, uint32_t seed)
 
     struct ble_gap_adv_params params;
     memset(&params, 0, sizeof(params));
-    /* Non-connectable: there is nothing here to connect to, and an advertiser
-     * that accepts connections is a service, not a signal. */
-    params.conn_mode = BLE_GAP_CONN_MODE_NON;
+    /* Non-connectable by default: there is nothing here to connect to, and an
+     * advertiser that accepts connections is a service rather than a signal.
+     *
+     * The peripheral shape is the deliberate exception. A connectable device
+     * appearing where none belongs is exactly what a rogue-peripheral detector
+     * looks for, and it cannot be tested with an advertisement that refuses
+     * connections. Nothing is served behind it -- there are no characteristics
+     * and no data to read. */
+    params.conn_mode = (shape == BAS_ADV_CONNECTABLE) ? BLE_GAP_CONN_MODE_UND
+                                                      : BLE_GAP_CONN_MODE_NON;
     params.disc_mode = BLE_GAP_DISC_MODE_GEN;
     params.itvl_min  = 0x0020;    /* 20 ms */
     params.itvl_max  = 0x0030;    /* 30 ms */
@@ -404,6 +459,12 @@ uint32_t  bas_ble_advert_count(void) { return 0; }
 void      bas_ble_reset_count(void)  { }
 
 esp_err_t bas_ble_advertise(const char *name, uint32_t seed)
+{
+    return bas_ble_advertise_as(name, seed, BAS_ADV_NAME);
+}
+
+esp_err_t bas_ble_advertise_as(const char *name, uint32_t seed,
+                               bas_adv_shape_t shape)
 {
     (void)name; (void)seed;
     return ESP_ERR_NOT_SUPPORTED;

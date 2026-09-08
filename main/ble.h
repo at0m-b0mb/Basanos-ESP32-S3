@@ -35,10 +35,34 @@
 esp_err_t bas_ble_init(void);
 bool      bas_ble_ready(void);
 
+/* The shape of an advertisement.
+ *
+ * Different detectors key on different things -- an advertiser count, a name,
+ * a beacon payload, a connectable peripheral appearing where none belongs --
+ * so the shape is what distinguishes one family from another, not the rate. */
+typedef enum {
+    BAS_ADV_NAME = 0,     /* name only, non-connectable                     */
+    BAS_ADV_BEACON,       /* proximity-beacon shaped: UUID, major, minor    */
+    BAS_ADV_CONNECTABLE,  /* a peripheral that accepts connections          */
+    BAS_ADV_SERVICE,      /* a service UUID with data behind it             */
+} bas_adv_shape_t;
+
 /* Advertise as `name` from a synthetic random-static address derived from
  * `seed`. Calling again re-advertises under a new identity, which is what the
  * spam family does; calling once and leaving it is the tracker family. */
 esp_err_t bas_ble_advertise(const char *name, uint32_t seed);
+
+/* The same, with an explicit payload shape.
+ *
+ * Manufacturer payloads use company id 0xFFFF, which the Bluetooth SIG
+ * reserves for testing. That gives a well-formed frame a parser will accept
+ * without wearing a real vendor's identity -- the detectors being tested score
+ * the shape, and borrowing Apple's or Google's id would put dialogs on the
+ * phones of people who did not consent to the engagement. */
+esp_err_t bas_ble_advertise_as(const char *name, uint32_t seed,
+                               bas_adv_shape_t shape);
+
+#define BAS_BLE_TEST_COMPANY 0xFFFFu
 esp_err_t bas_ble_stop(void);
 
 /* --- observer -------------------------------------------------------------
