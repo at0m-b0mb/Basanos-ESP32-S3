@@ -1442,6 +1442,7 @@ void app_main(void)
     /* When the glass was first touched on an arming screen, so a
      * passing contact is not mistaken for the start of an arm. */
     uint32_t touch_arm_since = 0;
+    uint32_t touch_back_since = 0;
     /* Whichever section's list is open. The detail, hold and run screens are
      * identical for Wi-Fi and BLE, so they follow this rather than each
      * knowing which section they came from. */
@@ -1783,35 +1784,58 @@ void app_main(void)
             /* Before arming, not after: this is the screen the escape exists
              * for, and it must beat the hold that would otherwise swallow it. */
             if (back) {
-                touch_arm_since = 0;
+                touch_arm_since  = 0;
+                touch_back_since = 0;
                 st_cur = ST_ATTACKS;
                 redraw = true;
                 break;
             }
 
-            /* A finger has to REST here, not merely land.
+            /* Where the finger is decides what the hold means.
              *
-             * Entering the arming screen on first contact is what made the
-             * gauge flash up during any other gesture. The button keeps its
-             * immediate behaviour -- pressing it is already deliberate and it
-             * does nothing else on this screen -- but the glass has to be held
-             * past the point where a tap could still be a tap. */
+             * Arming and going back are both holds, and while they shared the
+             * whole screen every other gesture flashed the arming gauge. The
+             * arming hold is now confined to the drawn button; a hold anywhere
+             * else is the way out. They cannot be confused because they no
+             * longer overlap.
+             *
+             * Back needs the longer hold of the two. If a finger drifts off
+             * the button mid-arm the run is abandoned, which is the safe way
+             * round -- the opposite would arm from a gesture aimed elsewhere. */
             bool arm_now = false;
             if (ready && fs->klass == BAS_CLASS_DISRUPTIVE) {
                 if (held(BOARD_BTN_ACCEPT)) {
                     arm_now = true;
-                } else if (input_held_down()) {
-                    if (touch_arm_since == 0u) {
-                        touch_arm_since = now_ms();
-                    } else if (now_ms() - touch_arm_since >= 350u) {
-                        arm_now = true;
-                    }
                 } else {
-                    touch_arm_since = 0;
+                    bas_touch_t t;
+                    bool down = bas_touch_present() &&
+                                bas_touch_read(&t) && t.down;
+                    if (!down) {
+                        touch_arm_since = 0;
+                        touch_back_since = 0;
+                    } else if (bas_ui_arm_hit(t.x, t.y)) {
+                        touch_back_since = 0;
+                        if (touch_arm_since == 0u) {
+                            touch_arm_since = now_ms();
+                        } else if (now_ms() - touch_arm_since >= 300u) {
+                            arm_now = true;
+                        }
+                    } else {
+                        touch_arm_since = 0;
+                        if (touch_back_since == 0u) {
+                            touch_back_since = now_ms();
+                        } else if (now_ms() - touch_back_since >= 500u) {
+                            touch_back_since = 0;
+                            st_cur = ST_ATTACKS;
+                            redraw = true;
+                            break;
+                        }
+                    }
                 }
             }
             if (arm_now) {
                 touch_arm_since = 0;
+                touch_back_since = 0;
                 plan = probe;
                 hold_start = 0;
                 hold_gap   = 0;
@@ -1820,7 +1844,16 @@ void app_main(void)
                 break;
             }
 
-            if ((tap || accept) && ready) {
+            /* Never from a bare tap on a disruptive family.
+             *
+             * While the arming hold covered the whole screen, any contact
+             * became a hold and this branch could not be reached. Confining
+             * the hold to a button opened a path where a single tap launched a
+             * deauth with no arming at all -- the exact opposite of what the
+             * button was added to guarantee. Disruptive runs start only from
+             * the arming screen. */
+            if ((tap || accept) && ready &&
+                fs->klass != BAS_CLASS_DISRUPTIVE) {
                 plan = probe;
                 role = BAS_ROLE_OPERATOR;
                 goto do_run;

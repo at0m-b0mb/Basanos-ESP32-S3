@@ -72,6 +72,16 @@ void bas_ui_keyboard(const char *title, const char *buf);
 int  bas_ui_keyboard_hit(uint16_t x, uint16_t y);  /* -1 none -2 done -3 back */
 char bas_ui_keyboard_char(int key);
 
+/* The arming button on a disruptive family's detail screen.
+ *
+ * Arming is a hold, and so is going back. Sharing the whole glass between them
+ * is what made every other gesture flash the arming gauge, so the hold that
+ * arms is confined to this rectangle and a hold anywhere else means back. The
+ * two can no longer be confused because they no longer overlap. */
+#define BAS_ARM_Y0  192
+#define BAS_ARM_Y1  222
+bool bas_ui_arm_hit(uint16_t x, uint16_t y);
+
 void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
                    const bas_engagement_t *e, bas_err_t gate);
 void bas_ui_hold(bas_family_t f, const bas_engagement_t *e, int pct);

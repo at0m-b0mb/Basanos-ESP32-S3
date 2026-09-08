@@ -492,6 +492,12 @@ static uint16_t class_colour(bas_class_t k)
                                      : TH_OK;
 }
 
+bool bas_ui_arm_hit(uint16_t x, uint16_t y)
+{
+    return (y >= BAS_ARM_Y0) && (y <= BAS_ARM_Y1) &&
+           (x >= TH_PAD) && (x <= (uint16_t)(W - TH_PAD));
+}
+
 void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
                    const bas_engagement_t *e, bas_err_t gate)
 {
@@ -563,10 +569,21 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
         if (p->clamped_pps || p->clamped_secs) {
             bas_text(c, TH_PAD, 174, "clamped to the family ceiling", TH_WARN, 1);
         }
-        bas_text_clip(c, TH_PAD, 190, e->label, TH_BRASS, 1, W - 2 * TH_PAD);
-        foot(c, s->klass == BAS_CLASS_DISRUPTIVE
-                    ? "hold LEFT arms   hold RIGHT back"
-                    : "LEFT to arm");
+        bas_text_clip(c, TH_PAD, 178, e->label, TH_BRASS, 1, W - 2 * TH_PAD);
+
+        if (s->klass == BAS_CLASS_DISRUPTIVE) {
+            /* A real target to hold, drawn in the family's own severity
+             * colour. Everything outside it means back, so the operator can
+             * put a finger anywhere else on the screen without arming. */
+            const int h = BAS_ARM_Y1 - BAS_ARM_Y0;
+            bas_fill(c, TH_PAD, BAS_ARM_Y0, W - 2 * TH_PAD, h, TH_STOP);
+            const char *lbl = "HOLD TO ARM";
+            bas_text(c, (W - bas_text_width(lbl, 1)) / 2,
+                     BAS_ARM_Y0 + (h / 2) - 3, lbl, TH_PAPER, 1);
+            foot(c, "hold elsewhere to go back");
+        } else {
+            foot(c, "LEFT to arm");
+        }
     }
     bas_display_flush();
 }

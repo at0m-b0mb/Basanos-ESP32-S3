@@ -1,0 +1,169 @@
+00 00177000
+I (28) boot: End of partition table
+I (28) esp_image: segment 0: paddr=00010020 vaddr=3c0e0020 size=2ef8ch (192396) map
+I (57) esp_image: segment 1: paddr=0003efb4 vaddr=3fca3200 size=01064h (  4196) load
+I (58) esp_image: segment 2: paddr=00040020 vaddr=42000020 size=d1750h (857936) map
+I (186) esp_image: segment 3: paddr=00111778 vaddr=3fca4264 size=0474ch ( 18252) load
+I (190) esp_image: segment 4: paddr=00115ecc vaddr=40374000 size=1f188h (127368) load
+I (214) esp_image: segment 5: paddr=0013505c vaddr=600fe000 size=00020h (    32) load
+I (226) boot: Loaded app from partition at offset 0x10000
+I (226) boot: Disabling RNG early entropy source...
+I (227) octal_psram: vendor id    : 0x0d (AP)
+I (228) octal_psram: dev id       : 0x02 (generation 3)
+I (228) octal_psram: density      : 0x03 (64 Mbit)
+I (228) octal_psram: good-die     : 0x01 (Pass)
+I (228) octal_psram: Latency      : 0x01 (Fixed)
+I (229) octal_psram: VCC          : 0x01 (3V)
+I (229) octal_psram: SRF          : 0x01 (Fast Refresh)
+I (229) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+I (229) octal_psram: BurstLen     : 0x01 (32 Byte)
+I (229) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (230) octal_psram: DriveStrength: 0x00 (1/1)
+I (230) MSPI Timing: PSRAM timing tuning index: 5
+I (231) esp_psram: Found 8MB PSRAM device
+I (231) esp_psram: Speed: 80MHz
+I (231) cpu_start: Multicore app
+I (644) esp_psram: SPI SRAM memory test OK
+I (653) cpu_start: Pro cpu start user code
+I (653) cpu_start: cpu freq: 160000000 Hz
+I (653) app_init: Application information:
+I (653) app_init: Project name:     basanos
+I (653) app_init: App version:      v1.1.1-1-g7a1b247-dirty
+I (653) app_init: Compile time:     Sep  8 2026 13:10:14
+I (654) app_init: ELF file SHA256:  5c935bcf3...
+I (654) app_init: ESP-IDF:          v5.5
+I (654) efuse_init: Min chip rev:     v0.0
+I (654) efuse_init: Max chip rev:     v0.99 
+I (654) efuse_init: Chip rev:         v0.2
+I (654) heap_init: Initializing. RAM available for dynamic allocation:
+I (655) heap_init: At 3FCB65D8 len 00033138 (204 KiB): RAM
+I (655) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (655) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (655) heap_init: At 600FE020 len 00001FC8 (7 KiB): RTCRAM
+I (655) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+I (656) spi_flash: detected chip: generic
+I (656) spi_flash: flash io: qio
+I (657) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (658) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (658) coexist: coex firmware version: 831ec70
+I (658) coexist: coexist rom version e7ae62f
+I (659) main_task: Started on CPU0
+I (660) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (661) main_task: Calling app_main()
+I (661) basanos: Basanos v0.1.0
+I (785) bas_disp: ST7789 240x240 up
+I (785) bas_disp: fb 112 KB psram, bands 2 x 14400 B internal
+I (785) bas_disp: heap: 205587 internal, 8269452 psram
+I (2223) bas_selftest: raw injection available
+I (2223) bas_selftest: 27 checks, 0 failures
+I (2223) basanos: main stack low water: 8160 bytes free
+I (4261) bas_power: latched=1 calibrated=1 4179mV (100%)
+BAS> ready — 'help' for commands
+I (4263) bas_con: console up on USB-Serial/JTAG
+E (4292) sdmmc_common: sdmmc_init_ocr: send_op_cond (1) returned 0x107
+E (4294) vfs_fat_sdmmc: sdmmc_card_init failed (0x107).
+W (4295) bas_sdlog: no card (ESP_ERR_TIMEOUT)
+W (4296) basanos: engagement log unavailable: no card (ESP_ERR_TIMEOUT)
+I (4398) bas_touch: CST816 up, chip id 0xB6
+I (4399) basanos: touch: present (0xB6)
+I (4426) pp: pp rom version: e7ae62f
+I (4427) net80211: net80211 rom version: e7ae62f
+I (4429) wifi:wifi driver task: 3fcd0030, prio:23, stack:6656, core=0
+I (4444) wifi:wifi firmware version: f3dbad7
+I (4445) wifi:wifi certification version: v7.0
+I (4446) wifi:config NVS flash: enabled
+I (4447) wifi:config nano formatting: disabled
+I (4448) wifi:Init data frame dynamic rx buffer num: 32
+I (4450) wifi:Init static rx mgmt buffer num: 5
+I (4451) wifi:Init management short buffer num: 32
+I (4452) wifi:Init dynamic tx buffer num: 32
+I (4453) wifi:Init static tx FG buffer num: 2
+I (4454) wifi:Init static rx buffer size: 1600
+I (4455) wifi:Init static rx buffer num: 10
+I (4456) wifi:Init dynamic rx buffer num: 32
+I (4458) wifi_init: rx ba win: 6
+I (4459) wifi_init: accept mbox: 6
+I (4459) wifi_init: tcpip mbox: 32
+I (4460) wifi_init: udp mbox: 6
+I (4461) wifi_init: tcp mbox: 6
+I (4462) wifi_init: tcp tx win: 5760
+I (4462) wifi_init: tcp rx win: 5760
+I (4463) wifi_init: tcp mss: 1440
+I (4464) wifi_init: WiFi IRAM OP enabled
+I (4465) wifi_init: WiFi RX IRAM OP enabled
+I (4466) phy_init: phy_version 701,f4f1da3a,Mar  3 2025,15:50:10
+I (4504) wifi:mode : sta (28:84:85:91:bf:fc)
+I (4505) wifi:enable tsf
+I (7605) basanos: survey: 21 networks
+I (7606) basanos:    0  Sunset12               82:DA:C2:92:87:51 ch6    -52dBm WPA2/3   
+I (7608) basanos:    1  (hidden)               82:DA:C2:92:87:55 ch6    -52dBm WPA2-Ent   MFP
+I (7610) basanos:    2  (hidden)               82:DA:C2:92:87:56 ch6    -52dBm WPA2-Ent   MFP
+I (7612) basanos:    3  (hidden)               82:DA:C2:92:87:57 ch6    -52dBm WPA2     
+I (7614) basanos:    4  (hidden)               AE:61:A3:90:83:65 ch11   -72dBm WPA2     
+I (7616) basanos:    5  HOME-5A88              8C:61:A3:90:83:65 ch11   -72dBm WPA2     
+I (7618) basanos:    6  (hidden)               CE:61:A3:90:83:65 ch11   -73dBm WPA2-Ent   MFP
+I (7620) basanos:    7  Marvel House           18:A5:FF:E2:00:A6 ch1    -76dBm WPA2/3   
+I (7622) basanos:    8  TMOBILE-9321           C0:D7:AA:F1:93:23 ch6    -81dBm WPA2     
+I (7624) basanos:    9  MsPage                 AC:DF:9F:90:C7:0A ch3    -84dBm WPA2/3   
+I (7625) basanos:   10  BrooksFamT             AC:DF:9F:AA:62:76 ch1    -85dBm WPA2/3   
+I (7627) basanos:   11  Verizon_XZ4S9W         78:67:0E:33:E6:D1 ch1    -85dBm WPA2     
+I (7629) basanos:   12  Verizon_L7ZD9R         1C:F4:3F:14:86:B7 ch6    -85dBm WPA2     
+I (7631) basanos:   13  TMOBILE-F8CD           C0:D7:AA:F7:F8:CF ch3    -87dBm WPA2     
+I (7633) basanos:   14  CARRIE                 E2:DB:D1:35:56:E8 ch11   -88dBm WPA2     
+I (7635) basanos:   15  (hidden)               E2:DB:D1:35:56:ED ch11   -89dBm WPA2-Ent   MFP
+I (7637) basanos:   16  (hidden)               E2:DB:D1:35:56:EE ch11   -89dBm WPA2     
+I (7639) basanos:   17  Verizon_TQ39ZB_EXT     C0:C9:E3:78:54:0D ch6    -90dBm WPA2     
+I (7641) basanos:   18  Melvin1965             82:DA:C2:D7:32:F1 ch11   -93dBm WPA2     
+I (7643) basanos:   19  (hidden)               82:DA:C2:D7:32:F6 ch11   -93dBm WPA2-Ent   MFP
+I (7645) basanos:   20  Joker's Jinks          EC:AA:A0:04:93:48 ch11   -97dBm WPA2     
+I (7647) basanos: region: FCC inferred from 'US' (20 of 20 networks)
+I (7649) basanos: heap: 151123 internal, 8263740 psram
+I (7651) wifi:ic_enable_sniffer
+I (7652) bas_sniff: listening, hopping
+BAS> surveying...
+I (7654) wifi:ic_disable_sniffer
+I (7655) bas_sniff: stopped
+I (10756) wifi:ic_enable_sniffer
+I (10758) bas_sniff: listening, hopping
+I (10759) basanos: survey: 19 networks
+I (10760) basanos:    0  Sunset12               82:DA:C2:92:87:51 ch6    -52dBm WPA2/3   
+I (10762) basanos:    1  (hidden)               82:DA:C2:92:87:55 ch6    -52dBm WPA2-Ent   MFP
+I (10764) basanos:    2  (hidden)               82:DA:C2:92:87:56 ch6    -52dBm WPA2-Ent   MFP
+I (10766) basanos:    3  (hidden)               82:DA:C2:92:87:57 ch6    -52dBm WPA2     
+I (10768) basanos:    4  HOME-5A88              8C:61:A3:90:83:65 ch11   -72dBm WPA2     
+I (10770) basanos:    5  (hidden)               AE:61:A3:90:83:65 ch11   -72dBm WPA2     
+I (10772) basanos:    6  (hidden)               CE:61:A3:90:83:65 ch11   -72dBm WPA2-Ent   MFP
+I (10774) basanos:    7  Marvel House           18:A5:FF:E2:00:A6 ch1    -75dBm WPA2/3   
+I (10776) basanos:    8  TMOBILE-9321           C0:D7:AA:F1:93:23 ch6    -82dBm WPA2     
+I (10778) basanos:    9  MsPage                 AC:DF:9F:90:C7:0A ch3    -87dBm WPA2/3   
+I (10780) basanos:   10  Yinz                   F8:3E:B0:24:B4:9E ch3    -88dBm WPA2/3   
+I (10782) basanos:   11  printer                AC:DF:AD:91:C7:0A ch3    -88dBm WPA2     
+I (10784) basanos:   12  (hidden)               1E:46:A7:2F:A4:72 ch8    -88dBm WPA2/3   
+I (10786) basanos:   13  Apt2_EXT               0C:EF:15:D2:BE:18 ch11   -88dBm WPA2     
+I (10788) basanos:   14  Melvin1965             82:DA:C2:D7:32:F1 ch11   -91dBm WPA2     
+I (10790) basanos:   15  (hidden)               7A:9C:8E:44:91:75 ch1    -92dBm WPA2     
+I (10792) basanos:   16  Verizon_TQ39ZB_EXT     C0:C9:E3:78:54:0D ch6    -93dBm WPA2     
+I (10794) basanos:   17  HP-Print-6F-Officejet Pro 6830 B0:5A:DA:A5:E7:6F ch6    -95dBm WPA2     
+I (10796) basanos:   18  TMOBILE-1E5A           18:A5:FF:81:1E:5C ch9    -96dBm WPA2/3   
+BAS> 19 networks
+BAS> WPS survey — 28 network(s), nothing transmitted
+BAS> 
+BAS> [11] (hidden)             ch1  -86dBm  WPS on, methods unknown
+BAS>     78:67:0E:33:E6:D1  WPA2
+BAS>     Enabled and unlocked. The beacon does not say which methods, so a PIN method is not ruled out. Probe it to find out.
+BAS> 
+BAS> [12] Verizon_L7ZD9R       ch6  -86dBm  WPS on, methods unknown
+BAS>     1C:F4:3F:14:86:B7  WPA2
+BAS>     Enabled and unlocked. The beacon does not say which methods, so a PIN method is not ruled out. Probe it to find out.
+BAS> 
+BAS> [21] (hidden)             ch1  -92dBm  WPS on, methods unknown
+BAS>     88:6A:E3:6F:55:9B  WPA2
+BAS>     Enabled and unlocked. The beacon does not say which methods, so a PIN method is not ruled out. Probe it to find out.
+BAS> 
+BAS> [25] Verizon_HSP73T       ch1  -94dBm  WPS on, methods unknown
+BAS>     08:27:A8:31:20:09  WPA2
+BAS>     Enabled and unlocked. The beacon does not say which methods, so a PIN method is not ruled out. Probe it to find out.
+BAS> 
+BAS> 4 EXPOSED, 0 locked, 24 without WPS
+BAS> the rest are enabled and unlocked but do not announce their methods —
+BAS> 'crack CONFIRM' against a locked target settles it.
