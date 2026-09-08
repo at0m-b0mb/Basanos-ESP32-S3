@@ -22,6 +22,7 @@
 #include "theme.h"
 #include "touch.h"
 #include "transmit.h"
+#include "uartalarm.h"
 #include "ui.h"
 
 #include "basanos/rbac.h"
@@ -247,11 +248,40 @@ static void survey(void)
 
 static volatile bool s_abort;
 
+/* The run currently open for scoring. A machine-reported alarm can arrive at
+ * any moment between the first frame and the end of the grace window, so both
+ * the transmit tick and the scoring screen drain into the same run. */
+static int s_scoring_run = -1;
+
+/* Credit any alarm the detector sent over the UART pads.
+ *
+ * This is the machine-timed path: the timestamp is the byte arriving, not an
+ * operator noticing, and the source travels with it so the two are never
+ * averaged together. */
+static void poll_uart_alarms(void)
+{
+    if (s_scoring_run < 0) {
+        return;
+    }
+    bas_alarm_t a;
+    while (bas_uart_alarm_take(&a)) {
+        bas_err_t rc = bas_card_alarm_from(&s_card, s_scoring_run, &a, now_ms());
+        if (rc == BAS_OK) {
+            ESP_LOGI(TAG, "alarm from %s over serial, conf %u",
+                     a.detector, (unsigned)a.confidence);
+        }
+    }
+}
+
 typedef struct { bas_family_t f; uint32_t budget; } tx_ctx_t;
 
 static bool tx_tick(const bas_tx_result_t *p, void *ctx)
 {
     const tx_ctx_t *c = (const tx_ctx_t *)ctx;
+
+    /* A detector that fires while the signal is still on air is a CAUGHT, and
+     * that only happens if the alarm is collected during the run. */
+    poll_uart_alarms();
     bas_ui_running(c->f, &s_engage, p, c->budget);
 
     uint16_t tx, ty;
@@ -292,6 +322,7 @@ static void console_help(void)
     bas_console_reply("alarm [name]             record an alarm on the last run");
     bas_console_reply("card                     the scorecard");
     bas_console_reply("status                   where things stand");
+    bas_console_reply("uart [baud|off]          listen for detector alarms");
     bas_console_reply("selftest                 re-run the invariants");
 }
 
@@ -317,6 +348,11 @@ static void console_status(void)
     bas_card_tally(&s_card, now_ms(), &t);
     bas_console_reply("card caught=%d late=%d missed=%d pending=%d",
                       t.caught, t.late, t.missed, t.pending);
+    bas_console_reply("uart=%d lines=%u parsed=%u last='%s'",
+                      (int)bas_uart_alarm_active(),
+                      (unsigned)bas_uart_alarm_lines(),
+                      (unsigned)bas_uart_alarm_parsed(),
+                      bas_uart_alarm_last());
 }
 
 static void console_list(void)
@@ -405,6 +441,7 @@ static void console_run(const bas_cmd_t *c)
     tx_ctx_t ctx = { .f = f, .budget = budget };
     s_abort = false;
     int idx = bas_card_begin(&s_card, f, now_ms(), BAS_GRACE_DEFAULT_MS);
+    s_scoring_run = idx;
 
     uint32_t t0 = now_ms();
     bas_tx_result_t res;
@@ -455,8 +492,21 @@ static void console_run(const bas_cmd_t *c)
         return;
     }
     s_last_run = idx;
-    bas_console_reply("scoring open for %ums — 'alarm <name>' if it fired",
-                      (unsigned)BAS_GRACE_DEFAULT_MS);
+
+    /* Hold the run open for its grace window, draining the UART throughout.
+     * Returning immediately would close the command before a detector that
+     * alarms two seconds late could be heard. */
+    uint32_t grace_end = now_ms() + BAS_GRACE_DEFAULT_MS;
+    while (now_ms() < grace_end) {
+        poll_uart_alarms();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    char vline[96];
+    bas_run_line(&s_card.r[idx], now_ms(), vline, sizeof(vline));
+    bas_console_reply("%s", vline);
+    bas_sdlog_verdict(&s_engage, &s_card.r[idx], now_ms());
+    s_scoring_run = -1;
 }
 
 static void console_exec(const bas_cmd_t *c)
@@ -518,6 +568,23 @@ static void console_exec(const bas_cmd_t *c)
             char line[96];
             bas_run_line(&s_card.r[s_last_run], now_ms(), line, sizeof(line));
             bas_console_reply("%s — %s", bas_err_str(rc), line);
+        }
+        break;
+
+    case CMD_UART:
+        if (c->index < 0) {
+            bas_uart_alarm_stop();
+            bas_console_reply("alarm listener stopped");
+        } else if (bas_uart_alarm_start(c->index) == ESP_OK) {
+            bas_console_reply("listening for BASANOS-ALARM on GPIO %d at %d baud",
+                              (int)BOARD_UART_RX,
+                              c->index ? c->index : BAS_UART_ALARM_BAUD);
+            bas_console_reply("loopback self-test: %s",
+                              bas_uart_alarm_selftest() ? "PASSED — the whole"
+                                  " path works, waiting on a real detector"
+                                  : "FAILED");
+        } else {
+            bas_console_reply("could not open the UART");
         }
         break;
 
@@ -956,6 +1023,7 @@ void app_main(void)
                 s_abort = false;
                 run_idx = bas_card_begin(&s_card, f, now_ms(),
                                          BAS_GRACE_DEFAULT_MS);
+                s_scoring_run = run_idx;
 
                 bas_tx_result_t res;
                 esp_err_t rc = bas_tx_run(&plan, &s_engage, role, tx_tick,
@@ -1001,6 +1069,16 @@ void app_main(void)
         }
 
         case ST_ASK: {
+            poll_uart_alarms();
+            /* A machine-reported alarm ends the wait at once: the question has
+             * been answered and there is nothing for the operator to add. */
+            if (run_idx >= 0 && s_card.r[run_idx].alarm_seen) {
+                bas_sdlog_verdict(&s_engage, &s_card.r[run_idx], now_ms());
+                s_scoring_run = -1;
+                st_cur = ST_RESULTS;
+                redraw = true;
+                break;
+            }
             uint32_t t = now_ms();
             uint32_t left = (t < ask_until) ? ask_until - t : 0u;
             bas_ui_ask(cur_fams[atk_sel], run_frames, left);
@@ -1015,6 +1093,7 @@ void app_main(void)
                 if (run_idx >= 0) {
                     bas_sdlog_verdict(&s_engage, &s_card.r[run_idx], now_ms());
                 }
+                s_scoring_run = -1;
                 st_cur = ST_RESULTS;
             }
             redraw = true;

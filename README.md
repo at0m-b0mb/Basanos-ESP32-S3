@@ -134,12 +134,28 @@ runs and still scores.
 
 ### Knowing whether it worked
 
-A detector under test reports in three ways — an operator watching it, a line
-on the UART pads, or a post over Wi-Fi:
+A detector under test reports in three ways, and the scorecard records which:
+
+| Source | How | Timing |
+|---|---|---|
+| `operator` | press LEFT when the detector reacts | includes human reaction |
+| `serial` | the detector prints a line on the UART pads | machine |
+| `network` | `alarm <name>` over the console | machine |
 
 ```
 BASANOS-ALARM detector=Aegis conf=82 fam=0x0F
 ```
+
+The UART listener runs on GPIO 43/44 — free because the console uses the
+built-in USB-Serial/JTAG rather than UART0. An alarm arriving *while the signal
+is still on air* is a `CAUGHT`, so the port is drained during the run as well
+as through the grace window.
+
+`uart` starts it and immediately runs a **loopback self-test**: the peripheral
+wires its own TX to RX, sends a well-formed alarm, and waits for it to come
+back out of the parser. That proves the whole path without a second device or a
+jumper, so "the listener works" is a checked claim rather than an assumption
+about wiring nobody has tried. The probe is discarded rather than scored.
 
 The source travels with the alarm into the report, because 300 ms from a wire
 and 300 ms from a human thumb are not the same measurement and must never be
@@ -311,6 +327,7 @@ the device halts on that screen rather than showing a target picker.**
 | PMKID solicitation | ✅ verified — full auth→assoc→M1 conversation, finding recorded |
 | Channel switch, association flood | ✅ verified — 28 and 99 frames |
 | Engagement log | ✅ CSV to SD; absent card is a missing capability, not a failure |
+| UART alarm listener | ✅ verified by internal loopback, end to end |
 | HID keystroke timing | 🧱 blocked by design — see below |
 
 Transmission is verified independently rather than by trusting a return code:

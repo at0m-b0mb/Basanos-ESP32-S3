@@ -95,6 +95,16 @@ static bool parse(char *line, bas_cmd_t *c)
     if (!strcmp(v, "selftest")) { c->kind = CMD_SELFTEST; return true; }
     if (!strcmp(v, "recon"))    { c->kind = CMD_RECON;    return true; }
 
+    if (!strcmp(v, "uart")) {
+        c->kind = CMD_UART;
+        /* "uart off" stops; "uart" takes the default rate; "uart 9600" follows
+         * a detector that chose its own. */
+        if (n >= 2 && !strcmp(tok[1], "off")) { c->index = -1; }
+        else if (n >= 2)                      { c->index = atoi_safe(tok[1]); }
+        else                                  { c->index = 0; }
+        return true;
+    }
+
     if (!strcmp(v, "sniff")) {
         c->kind = CMD_SNIFF;
         /* "sniff off" stops; "sniff" hops; "sniff 6" camps on a channel. */
