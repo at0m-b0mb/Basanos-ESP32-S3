@@ -1,0 +1,15 @@
+{
+  "name": "Basanos",
+  "version": "__VERSION__",
+  "home_assistant_domain": "",
+  "funding_url": "",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "firmware.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

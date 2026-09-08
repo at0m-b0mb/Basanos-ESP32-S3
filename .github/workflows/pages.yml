@@ -1,0 +1,64 @@
+# Publish the browser flasher.
+#
+# The firmware is copied into the site rather than linked from the release.
+# GitHub's release assets carry no CORS header, so a browser flasher fetching
+# one is blocked — the page loads, the button appears, and flashing fails with
+# nothing useful on screen. A same-origin copy avoids that entirely.
+name: pages
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5
+          target: esp32s3
+          command: >
+            idf.py build &&
+            esptool.py --chip esp32s3 merge_bin
+            --flash_mode dio --flash_freq 80m --flash_size 16MB
+            -o build/basanos-esp32s3.bin
+            0x0     build/bootloader/bootloader.bin
+            0x8000  build/partition_table/partition-table.bin
+            0x10000 build/basanos.bin
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -r docs/flasher/. _site/
+          cp build/basanos-esp32s3.bin _site/firmware.bin
+          cp assets/banner.svg _site/ 2>/dev/null || true
+          # The manifest points at the same-origin copy, never the release.
+          sed -i "s/__VERSION__/${GITHUB_REF_NAME:-dev}/" _site/manifest.json
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

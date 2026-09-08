@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Basanos — install</title>
+<meta name="description" content="A wireless assessment instrument for the ESP32-S3. Flash it from your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+<style>
+:root{
+  --paper:#FFFFFF; --sunk:#F4F5F7; --card:#FFFFFF;
+  --ink:#101418; --ink2:#3D444D; --ink3:#767E88;
+  --rule:#E3E6EA; --rule2:#C9CED6;
+  --brass:#9A7B1F; --shine:#D4AF37; --wash:#FBF6E6;
+  --ok:#2F6B4F; --warn:#A9761B; --stop:#A32E2E;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0B0D10; --sunk:#14181D; --card:#111519;
+    --ink:#EEF1F4; --ink2:#AFB7C0; --ink3:#7D8792;
+    --rule:#222831; --rule2:#333B45;
+    --brass:#D9B849; --shine:#E8C75C; --wash:#1E1A0E;
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:860px;margin:0 auto;padding:56px 24px 96px}
+h1,h2,h3{font-family:"Noto Serif",Georgia,serif;text-wrap:balance;letter-spacing:-.01em}
+a{color:var(--brass)}
+code,kbd{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:.9em}
+
+header{padding-bottom:28px;border-bottom:2px solid var(--ink)}
+h1{font-size:clamp(38px,7vw,60px);margin:0;font-weight:700}
+.gloss{font-family:"Noto Serif",Georgia,serif;font-style:italic;color:var(--ink3);
+  margin:6px 0 0;font-size:18px}
+.rule{height:3px;background:linear-gradient(90deg,var(--brass),var(--shine));
+  width:150px;margin:16px 0 0;border-radius:2px}
+
+.lede{font-family:"Noto Serif",Georgia,serif;font-size:21px;line-height:1.55;
+  color:var(--ink2);max-width:60ch;margin:30px 0 0}
+.lede strong{color:var(--ink);font-weight:600}
+
+.install{margin:38px 0;padding:30px;background:var(--sunk);
+  border:1px solid var(--rule2);border-radius:6px}
+.install h2{margin:0 0 6px;font-size:23px}
+.install p{margin:0 0 20px;color:var(--ink3);font-size:15px}
+esp-web-install-button{--esp-tools-button-color:var(--ink);
+  --esp-tools-button-text-color:var(--paper)}
+.nosupport{display:none;padding:14px 16px;border-radius:4px;
+  background:var(--wash);border:1px solid var(--brass);
+  color:var(--ink2);font-size:15px}
+
+.warn{margin:34px 0;padding:20px 24px;border-left:4px solid var(--stop);
+  background:var(--card);border-radius:0 4px 4px 0}
+.warn h3{margin:0 0 8px;font-size:18px;color:var(--stop)}
+.warn p{margin:0;color:var(--ink2);font-size:15px}
+
+section{margin-top:46px}
+section>h2{font-size:26px;margin:0 0 4px}
+.dek{color:var(--ink3);margin:0 0 22px;max-width:62ch}
+
+table{border-collapse:collapse;width:100%;font-size:15px;margin:0}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--rule);
+  vertical-align:top}
+thead th{font-family:"IBM Plex Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);
+  font-weight:500;background:var(--sunk)}
+tbody tr:last-child td{border-bottom:none}
+.pill{font-family:"IBM Plex Mono",monospace;font-size:11px;padding:3px 8px;
+  border-radius:3px;border:1px solid currentColor;white-space:nowrap}
+.b{color:var(--ok)} .a{color:var(--warn)} .d{color:var(--stop)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+  gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:5px;
+  overflow:hidden}
+.grid div{background:var(--card);padding:18px 20px}
+.grid h4{margin:0 0 6px;font-family:"Noto Serif",serif;font-size:17px}
+.grid p{margin:0;font-size:14px;color:var(--ink2)}
+
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--rule);
+  color:var(--ink3);font-size:14px}
+@media (max-width:620px){ .wrap{padding:34px 16px 70px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Basanos</h1>
+  <p class="gloss">the touchstone for wireless defences</p>
+  <div class="rule"></div>
+</header>
+
+<p class="lede">A wireless assessment instrument for the ESP32-S3. Every other
+tool of its class answers <em>“can I knock this over?”</em>. Basanos answers
+<strong>“would we have seen it?”</strong> — it emits a known signal at a network
+you are authorised to test, watches for your detection equipment to react, and
+scores it: caught or missed, how many seconds late, at what confidence.</p>
+
+<div class="install">
+  <h2>Install</h2>
+  <p>Connect the board over USB-C and click. Chrome or Edge on a desktop —
+  Web Serial is not available in Safari or Firefox.</p>
+
+  <esp-web-install-button manifest="manifest.json">
+    <button slot="activate">Flash Basanos</button>
+    <span slot="unsupported" class="nosupport" style="display:block">
+      This browser has no Web Serial. Open the page in Chrome or Edge on a
+      desktop, or flash the release asset with <code>esptool</code>.
+    </span>
+    <span slot="not-allowed" class="nosupport" style="display:block">
+      Web Serial needs a secure origin. Use the https:// address.
+    </span>
+  </esp-web-install-button>
+</div>
+
+<div class="warn">
+  <h3>Authorised testing only</h3>
+  <p>Transmitting deauthentication or disassociation frames at a network you do
+  not own or have written permission to test is a criminal offence in most
+  jurisdictions. This firmware makes that harder to do by accident and does
+  nothing whatever to make it lawful. If you cannot name the authorisation, the
+  device will not arm — and that is not a formality you can switch off.</p>
+</div>
+
+<section>
+  <h2>What it emits</h2>
+  <p class="dek">Every family exists because some class of detector claims to
+  catch it. A family that grades nothing does not ship.</p>
+
+  <table>
+    <thead><tr><th>Family</th><th>Class</th><th>What a catch proves</th></tr></thead>
+    <tbody>
+      <tr><td>Deauthentication</td><td><span class="pill d">disruptive</span></td><td>Rate, shape, forgery and aftermath evidence each fire</td></tr>
+      <tr><td>Disassociation</td><td><span class="pill d">disruptive</span></td><td>Frame-shape analysis is not narrowly deauth-specific</td></tr>
+      <tr><td>Channel switch</td><td><span class="pill d">disruptive</span></td><td>A forged switch is scored as an attack, not a move</td></tr>
+      <tr><td>Auth / association flood</td><td><span class="pill d">disruptive</span></td><td>Table pressure reads as attack rather than load</td></tr>
+      <tr><td>Evil twin</td><td><span class="pill a">active</span></td><td>Roaming stays clear while a posture conflict escalates</td></tr>
+      <tr><td>Karma responder</td><td><span class="pill a">active</span></td><td>The gap between names a radio answers and announces</td></tr>
+      <tr><td>PMKID solicitation</td><td><span class="pill a">active</span></td><td>The sensor sees the request, not what you kept</td></tr>
+      <tr><td>Beacon set</td><td><span class="pill a">active</span></td><td>Arrival rate scores; a busy room is not a flood</td></tr>
+      <tr><td>Probe requests</td><td><span class="pill b">benign</span></td><td>Client tracking survives MAC randomisation</td></tr>
+      <tr><td>BLE spam / tracker dwell</td><td><span class="pill b">benign</span></td><td>Advertiser multiplicity; a follower versus furniture</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>What makes it an instrument</h2>
+  <div class="grid">
+    <div>
+      <h4>It is never unfair to a detector</h4>
+      <p>A run is not called <code>MISSED</code> until the grace window after
+      the emission has fully elapsed. Scoring the instant a burst stopped would
+      slander a detector that alarms two seconds later.</p>
+    </div>
+    <div>
+      <h4>It refuses to score what it did not send</h4>
+      <p>If the radio rejects the frames, the run is discarded rather than
+      recorded as a miss. Blaming the detector for the transmitter’s failure is
+      the one output this device must never produce.</p>
+    </div>
+    <div>
+      <h4>Manual targeting, always</h4>
+      <p>One network, chosen by hand. Then the access point alone, a ticked set
+      of clients, or the whole cell — scoped by BSSID, so no other network is
+      touched.</p>
+    </div>
+    <div>
+      <h4>Nothing transmits unauthorised</h4>
+      <p>An engagement needs a label naming the authorisation and expires on a
+      timer. It is re-checked before every frame, so a lapse stops a burst that
+      is already in flight.</p>
+    </div>
+    <div>
+      <h4>It keeps no key material</h4>
+      <p>The passphrase audit runs on the device and wipes the handshake when
+      it finishes. The finding is the output; the artefact is not.</p>
+    </div>
+    <div>
+      <h4>It says what it cannot know</h4>
+      <p>An unmeasured channel is reported as unmeasured, not quiet. A tracker
+      is “looks like Find My”, never “is an AirTag”.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Hardware</h2>
+  <p class="dek">Waveshare <strong>ESP32-S3-Touch-LCD-1.54</strong> — 240×240
+  touch panel, 16 MB flash, 8 MB octal PSRAM, Li-ion, microSD. 2.4 GHz only;
+  there is no 5 GHz radio on this part, so a 5 GHz network is invisible to it.</p>
+</section>
+
+<footer>
+  Source and issues:
+  <a href="https://github.com/at0m-b0mb/Basanos-ESP32-S3">github.com/at0m-b0mb/Basanos-ESP32-S3</a>
+  · MIT · Set in Noto Serif and IBM Plex.
+</footer>
+
+</div>
+</body>
+</html>

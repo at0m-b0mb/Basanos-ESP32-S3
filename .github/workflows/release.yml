@@ -1,0 +1,41 @@
+# Build on a tag and attach a single flashable image.
+#
+# The asset is a MERGED image at offset 0 — bootloader, partition table and
+# app in one file. A browser flasher cannot assemble three files at three
+# offsets, and asking someone to do it by hand is how a first run fails.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host tests
+        run: make -C test/host
+
+      - name: Build and merge
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5
+          target: esp32s3
+          command: >
+            idf.py build &&
+            esptool.py --chip esp32s3 merge_bin
+            --flash_mode dio --flash_freq 80m --flash_size 16MB
+            -o build/basanos-${{ github.ref_name }}-esp32s3.bin
+            0x0     build/bootloader/bootloader.bin
+            0x8000  build/partition_table/partition-table.bin
+            0x10000 build/basanos.bin
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: build/basanos-${{ github.ref_name }}-esp32s3.bin
+          generate_release_notes: true

@@ -26,6 +26,25 @@ defences, you do not know.
 
 ---
 
+## Install
+
+**[Flash it from your browser →](https://at0m-b0mb.github.io/Basanos-ESP32-S3/)**
+
+Connect the board over USB-C and click. Chrome or Edge on a desktop; Web Serial
+is not available in Safari or Firefox. Or take the merged image from the
+[latest release](https://github.com/at0m-b0mb/Basanos-ESP32-S3/releases/latest)
+and write it at offset 0:
+
+```bash
+esptool.py --chip esp32s3 write_flash 0x0 basanos-vX.Y.Z-esp32s3.bin
+```
+
+The release asset is a single merged image rather than three files at three
+offsets, because a browser flasher cannot assemble those and asking someone to
+do it by hand is how a first run fails.
+
+---
+
 ## Authorised testing only
 
 Transmitting deauthentication or disassociation frames at a network you do not
