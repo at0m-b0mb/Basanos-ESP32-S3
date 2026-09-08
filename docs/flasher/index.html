@@ -53,6 +53,9 @@ h1{font-size:clamp(38px,7vw,60px);margin:0;font-weight:700}
 .install p{margin:0 0 20px;color:var(--ink3);font-size:15px}
 esp-web-install-button{--esp-tools-button-color:var(--ink);
   --esp-tools-button-text-color:var(--paper)}
+.ver{margin:0 0 18px!important;font-size:13px!important;
+  font-family:"IBM Plex Mono",monospace}
+.ver strong{color:var(--brass)}
 .nosupport{display:none;padding:14px 16px;border-radius:4px;
   background:var(--wash);border:1px solid var(--brass);
   color:var(--ink2);font-size:15px}
@@ -108,6 +111,10 @@ scores it: caught or missed, how many seconds late, at what confidence.</p>
   <h2>Install</h2>
   <p>Connect the board over USB-C and click. Chrome or Edge on a desktop —
   Web Serial is not available in Safari or Firefox.</p>
+  <p class="ver">Version <strong id="ver">…</strong> — rebuilt from source on
+  every release, and served from this origin rather than linked from the
+  release, because release assets carry no CORS header and a browser cannot
+  fetch one.</p>
 
   <esp-web-install-button manifest="manifest.json">
     <button slot="activate">Flash Basanos</button>
@@ -144,10 +151,14 @@ scores it: caught or missed, how many seconds late, at what confidence.</p>
       <tr><td>Auth / association flood</td><td><span class="pill d">disruptive</span></td><td>Table pressure reads as attack rather than load</td></tr>
       <tr><td>Evil twin</td><td><span class="pill a">active</span></td><td>Roaming stays clear while a posture conflict escalates</td></tr>
       <tr><td>Karma responder</td><td><span class="pill a">active</span></td><td>The gap between names a radio answers and announces</td></tr>
+      <tr><td>WPS survey</td><td><span class="pill b">benign</span></td><td>Grades exposure from the beacon alone; nothing is sent</td></tr>
+      <tr><td>WPS PIN recovery</td><td><span class="pill a">active</span></td><td>Derived-default and Pixie Dust, and the passphrase</td></tr>
       <tr><td>PMKID solicitation</td><td><span class="pill a">active</span></td><td>The sensor sees the request, not what you kept</td></tr>
       <tr><td>Beacon set</td><td><span class="pill a">active</span></td><td>Arrival rate scores; a busy room is not a flood</td></tr>
       <tr><td>Probe requests</td><td><span class="pill b">benign</span></td><td>Client tracking survives MAC randomisation</td></tr>
-      <tr><td>BLE spam / tracker dwell</td><td><span class="pill b">benign</span></td><td>Advertiser multiplicity; a follower versus furniture</td></tr>
+      <tr><td>BLE spam / name churn</td><td><span class="pill b">benign</span></td><td>Advertiser multiplicity survives a changing name</td></tr>
+      <tr><td>BLE tracker dwell / swarm</td><td><span class="pill b">benign</span></td><td>A follower versus furniture, one identity or many</td></tr>
+      <tr><td>BLE beacon / rogue peripheral</td><td><span class="pill b">benign</span></td><td>Proximity payloads, and a connectable device out of place</td></tr>
     </tbody>
   </table>
 </section>
@@ -180,9 +191,10 @@ scores it: caught or missed, how many seconds late, at what confidence.</p>
       is already in flight.</p>
     </div>
     <div>
-      <h4>It keeps no key material</h4>
-      <p>The passphrase audit runs on the device and wipes the handshake when
-      it finishes. The finding is the output; the artefact is not.</p>
+      <h4>It writes no key material down</h4>
+      <p>The passphrase audit wipes the handshake when it finishes. A
+      recovered WPS credential is shown on screen and never written to the
+      log — a report needs the finding, not custody of the key.</p>
     </div>
     <div>
       <h4>It says what it cannot know</h4>
@@ -206,5 +218,12 @@ scores it: caught or missed, how many seconds late, at what confidence.</p>
 </footer>
 
 </div>
+<script>
+/* The manifest is stamped by the release workflow, so this is the one thing
+   on the page that proves the deploy actually ran. */
+fetch('manifest.json').then(r => r.json()).then(m => {
+  document.getElementById('ver').textContent = m.version || 'unknown';
+}).catch(() => { document.getElementById('ver').textContent = 'unknown'; });
+</script>
 </body>
 </html>

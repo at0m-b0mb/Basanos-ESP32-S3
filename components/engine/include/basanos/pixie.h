@@ -144,6 +144,15 @@ uint32_t bas_glibc_rand(bas_glibc_rng_t *g);
  * how the vulnerable firmwares build a nonce. */
 void bas_glibc_bytes(bas_glibc_rng_t *g, uint8_t *out, size_t n);
 
+/* How many seeds bas_pixie_run sweeps for the clock-seeded class.
+ *
+ * This covers a registrar whose clock starts at zero -- its seed is then just
+ * its uptime in seconds, and 262,144 of them is about three days. A registrar
+ * with real time has a seed near the true epoch, which the device has no way
+ * to know, so that case is out of reach here and the result says so rather
+ * than reporting "not vulnerable". */
+#define BAS_PIXIE_SEED_SWEEP  262144u
+
 /* Search a window of seeds for one whose first draw reproduces the observed
  * enrollee nonce. Returns the seed, or 0 when the window holds none. */
 uint32_t bas_pixie_find_seed(const uint8_t enonce[BAS_PIXIE_NONCE],

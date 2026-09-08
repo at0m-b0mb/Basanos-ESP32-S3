@@ -139,6 +139,28 @@ void suite_pixie(void)
     CHECK(out.pin == 11223344u);
     CHECK(out.vuln == BAS_PIXIE_RNONCE);
 
+    SUITE("pixie: the clock-seeded class, end to end");
+
+    /* A registrar whose clock started at zero: its seed is its uptime, it
+     * draws its public nonce first and both secrets straight after. */
+    {
+        const uint32_t seed = 40817u;
+        bas_glibc_rng_t r;
+        uint8_t rn[16], s1[16], s2[16];
+        bas_glibc_srand(&r, seed);
+        bas_glibc_bytes(&r, rn, sizeof(rn));
+        bas_glibc_bytes(&r, s1, sizeof(s1));
+        bas_glibc_bytes(&r, s2, sizeof(s2));
+
+        fill_material(&in);
+        memcpy(in.rnonce, rn, sizeof(rn));
+        build_hashes(&in, 12345670u, s1, s2);
+        bas_pixie_run(&in, &out);
+        CHECK(out.found);
+        CHECK(out.pin == 12345670u);
+        CHECK(out.vuln == BAS_PIXIE_PRNG_TIME);
+    }
+
     SUITE("pixie: a sound registrar is reported as not vulnerable");
 
     /* This is the case that must never produce a false positive. An AP that
