@@ -306,7 +306,8 @@ void bas_ui_home(const bas_engagement_t *e, const bas_scan_t *s,
     snprintf(buf, sizeof(buf), "%u", (unsigned)(s ? s->count : 0));
     tile(c, 0, 0, "WI-FI", buf, sel == BAS_HOME_WIFI, true);
 
-    tile(c, 1, 0, "BLUETOOTH", "ready", sel == BAS_HOME_BLE, true);
+    snprintf(buf, sizeof(buf), "%s", bas_ble_scanning() ? "scanning" : "ready");
+    tile(c, 1, 0, "BLUETOOTH", buf, sel == BAS_HOME_BLE, true);
 
     tile(c, 0, 1, "RECON", locked ? "ready" : "scan", sel == BAS_HOME_RECON,
          true);
@@ -1002,4 +1003,54 @@ void bas_ui_probes(const bas_probe_t *p, int n, int sel)
     char right[20];
     snprintf(right, sizeof(right), "%d names", n);
     bas_ui_list("Probes", right, rows, n, sel, "hold LEFT back");
+}
+
+void bas_ui_ble_devices(const bas_ble_dev_t *d, int n, int sel,
+                        uint32_t tracker_dwell_ms)
+{
+    static bas_row_t rows[BAS_BLE_MAX_DEV];
+    static char names[BAS_BLE_MAX_DEV][26];
+    static char subs[BAS_BLE_MAX_DEV][40];
+
+    int trackers = 0;
+    for (int i = 0; i < n && i < BAS_BLE_MAX_DEV; i++) {
+        bool trk = bas_ble_kind_is_tracker(d[i].kind);
+        if (trk) { trackers++; }
+
+        if (d[i].name[0] != '\0') {
+            snprintf(names[i], sizeof(names[i]), "%s", d[i].name);
+        } else {
+            bas_mac_fmt(d[i].addr, names[i], sizeof(names[i]));
+        }
+        snprintf(subs[i], sizeof(subs[i]), "%4d dBm  %s%s", (int)d[i].rssi,
+                 bas_ble_kind_name(d[i].kind),
+                 d[i].randomised ? "  rotating" : "");
+
+        rows[i].title   = names[i];
+        rows[i].sub     = subs[i];
+        /* Trackers get the stripe. A phone advertising is background; a
+         * tracker in range is a finding. */
+        rows[i].stripe  = trk ? TH_STOP : 0u;
+        rows[i].enabled = true;
+    }
+
+    char right[24];
+    if (trackers > 0) {
+        snprintf(right, sizeof(right), "%d tracker%s", trackers,
+                 trackers == 1 ? "" : "s");
+    } else {
+        snprintf(right, sizeof(right), "%d seen", n);
+    }
+
+    char foot[48];
+    if (trackers > 0 && tracker_dwell_ms > 0u) {
+        /* Dwell is what separates a tracker following you from one that was
+         * simply in the room -- so it is the number on the screen. */
+        snprintf(foot, sizeof(foot), "longest dwell %us   hold LEFT back",
+                 (unsigned)(tracker_dwell_ms / 1000u));
+    } else {
+        snprintf(foot, sizeof(foot), "hold LEFT back");
+    }
+
+    bas_ui_list("Bluetooth", right, rows, n, sel, foot);
 }

@@ -207,6 +207,11 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
         if (rc != BAS_OK) {
             return rc;
         }
+        if (!e->has_target) {
+            /* A label-only engagement authorises the work but scopes no
+             * network, so every family that addresses one is refused. */
+            return BAS_ERR_NO_TARGET;
+        }
         if (s->needs_client && !e->has_client) {
             return BAS_ERR_NO_TARGET;
         }

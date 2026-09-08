@@ -11,6 +11,7 @@ int main(void)
 
     suite_target();
     suite_engage();
+    suite_engage_area();
     suite_family();
     suite_rbac();
     suite_score();

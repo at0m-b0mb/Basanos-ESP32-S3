@@ -55,11 +55,41 @@ bas_err_t bas_engage_lock(bas_engagement_t *e,
 
     memset(e, 0, sizeof(*e));
     e->target = *target;
+    e->has_target = true;
     (void)bas_strlcpy(e->label, label, sizeof(e->label));
     (void)bas_strlcpy(e->operator_name, operator_name, sizeof(e->operator_name));
     e->locked_ms  = now_ms;
     e->expires_ms = now_ms + ttl_ms;
     e->locked     = true;
+    return BAS_OK;
+}
+
+bas_err_t bas_engage_lock_area(bas_engagement_t *e,
+                               const char *label,
+                               const char *operator_name,
+                               uint32_t now_ms,
+                               uint32_t ttl_ms)
+{
+    if (e == NULL) {
+        return BAS_ERR_ARG;
+    }
+    if (!str_has_content(label)) {
+        return BAS_ERR_NO_LABEL;
+    }
+    if (!str_has_content(operator_name)) {
+        return BAS_ERR_ARG;
+    }
+    if (ttl_ms < BAS_TTL_MIN_MS || ttl_ms > BAS_TTL_MAX_MS) {
+        return BAS_ERR_ARG;
+    }
+
+    memset(e, 0, sizeof(*e));
+    (void)bas_strlcpy(e->label, label, sizeof(e->label));
+    (void)bas_strlcpy(e->operator_name, operator_name, sizeof(e->operator_name));
+    e->locked     = true;
+    e->has_target = false;    /* every needs_target family is refused */
+    e->locked_ms  = now_ms;
+    e->expires_ms = now_ms + ttl_ms;
     return BAS_OK;
 }
 
@@ -70,6 +100,10 @@ bas_err_t bas_engage_set_client(bas_engagement_t *e, const uint8_t mac[6])
     }
     if (!e->locked) {
         return BAS_ERR_NOT_LOCKED;
+    }
+    if (!e->has_target) {
+        /* A client narrows a target. There is nothing here to narrow. */
+        return BAS_ERR_NO_TARGET;
     }
     if (bas_mac_is_zero(mac)) {
         return BAS_ERR_ARG;
@@ -132,6 +166,10 @@ bas_err_t bas_engage_permits_frame(const bas_engagement_t *e,
     bas_err_t rc = bas_engage_check(e, now_ms);
     if (rc != BAS_OK) {
         return rc;
+    }
+    if (!e->has_target) {
+        /* A label-only engagement addresses nothing. */
+        return BAS_ERR_NO_TARGET;
     }
 
     /* Refuse the group bit before anything else. This is the single check that

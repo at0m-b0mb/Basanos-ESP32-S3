@@ -161,6 +161,28 @@ The source travels with the alarm into the report, because 300 ms from a wire
 and 300 ms from a human thumb are not the same measurement and must never be
 averaged together.
 
+### Bluetooth
+
+Passive scanning classifies what is advertising in the room, and the
+classification is named honestly: *"looks like Find My"* is a claim the
+manufacturer bytes support, *"is an AirTag"* is not.
+
+| Kind | Identified by |
+|---|---|
+| Find My tracker | Apple manufacturer data, type `0x12` |
+| Apple | other Continuity traffic |
+| Tile / SmartTag | service `0xFEED` / Samsung company id |
+| Fast Pair, Swift Pair | service `0xFE2C`, Microsoft company id |
+| Flipper Zero | advertised name |
+
+Trackers are striped and counted separately, because a phone advertising is
+background and a tracker in range is a finding. **Dwell** is reported rather
+than a sighting count: a tracker seen once is furniture, one seen across many
+minutes is following you — the distinction GhostTag exists to make.
+
+Dwell is measured first-seen to last-seen, not to now. A tracker that left ten
+minutes ago did not dwell for ten more.
+
 ### Passive capability
 
 None of it transmits.
@@ -328,6 +350,7 @@ the device halts on that screen rather than showing a target picker.**
 | Channel switch, association flood | ✅ verified — 28 and 99 frames |
 | Engagement log | ✅ CSV to SD; absent card is a missing capability, not a failure |
 | UART alarm listener | ✅ verified by internal loopback, end to end |
+| BLE scanner and tracker detection | ✅ verified — 26 devices, 6 trackers classified |
 | HID keystroke timing | 🧱 blocked by design — see below |
 
 Transmission is verified independently rather than by trusting a return code:

@@ -41,6 +41,65 @@ bool      bas_ble_ready(void);
 esp_err_t bas_ble_advertise(const char *name, uint32_t seed);
 esp_err_t bas_ble_stop(void);
 
+/* --- observer -------------------------------------------------------------
+
+   Passive BLE scanning. Nothing is transmitted; the radio listens to
+   advertisements every device in the room is broadcasting unprompted.
+
+   Devices are classified by what their advertisement carries, which is how a
+   tracker is told from a phone. The classification is deliberately coarse and
+   named honestly -- "looks like Find My" is a claim the data supports, "is an
+   AirTag" is not.
+   ------------------------------------------------------------------------- */
+
+typedef enum {
+    BAS_BLE_UNKNOWN = 0,
+    BAS_BLE_BASANOS,     /* our own synthetic advertisers                   */
+    BAS_BLE_FINDMY,      /* Apple Find My network -- AirTag and friends     */
+    BAS_BLE_APPLE,       /* other Apple Continuity traffic                  */
+    BAS_BLE_TILE,
+    BAS_BLE_SMARTTAG,    /* Samsung                                         */
+    BAS_BLE_FASTPAIR,    /* Google                                          */
+    BAS_BLE_MICROSOFT,   /* Swift Pair                                      */
+    BAS_BLE_FLIPPER,
+    BAS_BLE__COUNT
+} bas_ble_kind_t;
+
+const char *bas_ble_kind_name(bas_ble_kind_t k);
+
+/* True for kinds that are trackers by design. These are the ones worth
+ * surfacing on their own, because a tracker following you is a finding and a
+ * phone advertising is not. */
+bool bas_ble_kind_is_tracker(bas_ble_kind_t k);
+
+#define BAS_BLE_NAME_MAX 22
+#define BAS_BLE_MAX_DEV  40
+
+typedef struct {
+    uint8_t        addr[6];
+    uint8_t        addr_type;
+    char           name[BAS_BLE_NAME_MAX];
+    int8_t         rssi;
+    bas_ble_kind_t kind;
+    uint16_t       count;
+    uint32_t       first_ms;
+    uint32_t       last_ms;
+    bool           randomised;
+} bas_ble_dev_t;
+
+esp_err_t bas_ble_scan_start(void);
+esp_err_t bas_ble_scan_stop(void);
+bool      bas_ble_scanning(void);
+
+const bas_ble_dev_t *bas_ble_devices(int *count);
+void bas_ble_scan_reset(void);
+
+/* How long the longest-dwelling tracker has been in range. A tracker seen once
+ * is furniture; one seen across many minutes is following you -- which is the
+ * distinction GhostTag exists to make, and the reason dwell is reported
+ * separately from a sighting count. */
+uint32_t bas_ble_longest_tracker_dwell(uint32_t now_ms);
+
 /* Distinct identities advertised since the last reset. */
 uint32_t bas_ble_advert_count(void);
 void     bas_ble_reset_count(void);

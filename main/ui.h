@@ -17,6 +17,7 @@
 #include "basanos/station.h"
 #include "basanos/target.h"
 #include "selftest.h"
+#include "ble.h"
 #include "sniffer.h"
 #include "transmit.h"
 
@@ -100,6 +101,10 @@ void bas_ui_clients(const bas_stalist_t *l, int sel);
 /* Networks devices in the room are asking for by name -- their own history,
  * leaking. */
 void bas_ui_probes(const bas_probe_t *p, int n, int sel);
+
+/* BLE devices in range, trackers striped so they read at a glance. */
+void bas_ui_ble_devices(const bas_ble_dev_t *d, int n, int sel,
+                        uint32_t tracker_dwell_ms);
 
 /* Live touch check, kept from bring-up: a crosshair where the glass is
  * pressed, so a wrong axis mapping is one press to spot. */

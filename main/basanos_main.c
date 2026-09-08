@@ -322,6 +322,7 @@ static void console_help(void)
     bas_console_reply("alarm [name]             record an alarm on the last run");
     bas_console_reply("card                     the scorecard");
     bas_console_reply("status                   where things stand");
+    bas_console_reply("blescan [off]            passive BLE device scan");
     bas_console_reply("uart [baud|off]          listen for detector alarms");
     bas_console_reply("selftest                 re-run the invariants");
 }
@@ -571,6 +572,41 @@ static void console_exec(const bas_cmd_t *c)
         }
         break;
 
+    case CMD_BLESCAN:
+        if (c->index < 0) {
+            bas_ble_scan_stop();
+            bas_console_reply("ble scan stopped");
+        } else if (bas_ble_scan_start() == ESP_OK) {
+            bas_console_reply("scanning BLE, passive");
+        } else {
+            bas_console_reply("BLE unavailable");
+            break;
+        }
+        {
+            int n = 0;
+            const bas_ble_dev_t *d = bas_ble_devices(&n);
+            bas_console_reply("%d devices seen", n);
+            int trackers = 0;
+            for (int i = 0; i < n && i < 14; i++) {
+                char mac[18];
+                bas_mac_fmt(d[i].addr, mac, sizeof(mac));
+                bas_console_reply("  %s %4d %-16s %-14s x%u%s", mac,
+                                  (int)d[i].rssi, bas_ble_kind_name(d[i].kind),
+                                  d[i].name[0] ? d[i].name : "-",
+                                  (unsigned)d[i].count,
+                                  d[i].randomised ? " rand" : "");
+            }
+            for (int i = 0; i < n; i++) {
+                if (bas_ble_kind_is_tracker(d[i].kind)) { trackers++; }
+            }
+            if (trackers > 0) {
+                bas_console_reply("FINDING: %d tracker%s in range, longest dwell %u ms",
+                                  trackers, trackers == 1 ? "" : "s",
+                                  (unsigned)bas_ble_longest_tracker_dwell(now_ms()));
+            }
+        }
+        break;
+
     case CMD_UART:
         if (c->index < 0) {
             bas_uart_alarm_stop();
@@ -665,7 +701,8 @@ static void console_exec(const bas_cmd_t *c)
 typedef enum {
     ST_HOME, ST_WIFI, ST_NETWORKS, ST_TARGET, ST_LABEL,
     ST_ATTACKS, ST_ATTACK, ST_HOLD, ST_ASK, ST_RESULTS,
-    ST_BLE, ST_RECON, ST_CHANNELS, ST_FRAMES, ST_CLIENTS, ST_PROBES,
+    ST_BLE, ST_BLE_DEV, ST_RECON, ST_CHANNELS, ST_FRAMES, ST_CLIENTS,
+    ST_PROBES,
 } state_t;
 
 static uint16_t class_stripe(bas_class_t k)
@@ -744,7 +781,7 @@ void app_main(void)
 
     state_t  st_cur = ST_HOME;
     int  home_sel = 0, wifi_sel = 0, net_sel = 0, atk_sel = 0;
-    int  recon_sel = 0, cli_sel = 0, probe_sel = 0;
+    int  recon_sel = 0, cli_sel = 0, probe_sel = 0, ble_sel = 0, bdev_sel = 0;
     /* Whichever section's list is open. The detail, hold and run screens are
      * identical for Wi-Fi and BLE, so they follow this rather than each
      * knowing which section they came from. */
@@ -753,6 +790,8 @@ void app_main(void)
     bas_stalist_t clients;
     bas_sta_reset(&clients);
     char label[BAS_LABEL_MAX] = {0};
+    /* Whether the label being typed authorises a network or an area. */
+    bool label_is_area = false;
     uint32_t hold_start = 0, ask_until = 0, run_frames = 0;
     int  run_idx = -1;
     bas_plan_t plan;
@@ -877,7 +916,12 @@ void app_main(void)
         case ST_TARGET:
             if (redraw) { bas_ui_target(&s_scan.ap[net_sel], -1); redraw = false; }
             if (back) { st_cur = ST_NETWORKS; redraw = true; }
-            if (tap || accept) { label[0] = '\0'; st_cur = ST_LABEL; redraw = true; }
+            if (tap || accept) {
+                label[0] = '\0';
+                label_is_area = false;
+                st_cur = ST_LABEL;
+                redraw = true;
+            }
             break;
 
         case ST_LABEL: {
@@ -885,7 +929,11 @@ void app_main(void)
                 bas_ui_keyboard("Work order, client or ticket", label);
                 redraw = false;
             }
-            if (back) { st_cur = ST_TARGET; redraw = true; break; }
+            if (back) {
+                st_cur = label_is_area ? ST_BLE : ST_TARGET;
+                redraw = true;
+                break;
+            }
             if (!tap) { break; }
 
             int k = bas_ui_keyboard_hit(tx, ty);
@@ -900,12 +948,23 @@ void app_main(void)
                 if (n > 0u) { label[n - 1] = '\0'; }
                 redraw = true;
             } else if (k == -2) {
-                bas_err_t rc = bas_engage_lock(&s_engage, &s_scan.ap[net_sel],
-                                               label, "operator", now_ms(),
-                                               BAS_TTL_DEFAULT_MS);
+                bas_err_t rc;
+                if (label_is_area) {
+                    rc = bas_engage_lock_area(&s_engage, label, "operator",
+                                              now_ms(), BAS_TTL_DEFAULT_MS);
+                } else {
+                    rc = bas_engage_lock(&s_engage, &s_scan.ap[net_sel], label,
+                                         "operator", now_ms(),
+                                         BAS_TTL_DEFAULT_MS);
+                }
                 if (rc == BAS_OK) {
-                    ESP_LOGI(TAG, "locked '%s' on %s", label,
-                             s_engage.target.ssid);
+                    ESP_LOGI(TAG, "locked '%s' %s", label,
+                             label_is_area ? "(area, no network)"
+                                           : s_engage.target.ssid);
+                    if (label_is_area) {
+                        cur_fams = BLE_FAMS;
+                        cur_fam_n = BLE_FAM_N;
+                    }
                     st_cur = ST_ATTACKS;
                     atk_sel = 0;
                 } else {
@@ -927,7 +986,7 @@ void app_main(void)
                 redraw = false;
             }
             if (back) {
-                st_cur = (cur_fams == WIFI_FAMS) ? ST_WIFI : ST_HOME;
+                st_cur = (cur_fams == WIFI_FAMS) ? ST_WIFI : ST_BLE;
                 redraw = true;
                 break;
             }
@@ -1105,24 +1164,78 @@ void app_main(void)
             if (tap || accept || back) { st_cur = ST_HOME; redraw = true; }
             break;
 
-        case ST_BLE:
-            /* Both BLE families still need a locked engagement. They target
-             * nobody, but "nothing transmits without an engagement" is the
-             * invariant the whole device rests on and it does not get an
-             * exception for being harmless. */
-            if (!s_engage.locked) {
-                bas_ui_note("NO ENGAGEMENT", "Lock a target first.",
-                            "Wi-Fi, then choose a network.", TH_WARN);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                st_cur = ST_HOME;
-            } else {
-                cur_fams = BLE_FAMS;
-                cur_fam_n = BLE_FAM_N;
-                atk_sel = 0;
-                st_cur = ST_ATTACKS;
+        case ST_BLE: {
+            bool sc = bas_ble_scanning();
+            int bn = 0;
+            (void)bas_ble_devices(&bn);
+            char b0[40], b1[40];
+            snprintf(b0, sizeof(b0), sc ? "%d seen, listening" : "start the radio", bn);
+            snprintf(b1, sizeof(b1), "%s", s_engage.locked ? "advert spam, tracker dwell"
+                                                           : "lock a target first");
+            rows[0] = (bas_row_t){ sc ? "Stop scanning" : "Scan devices",
+                                   b0, 0, true };
+            rows[1] = (bas_row_t){ "Devices", sc || bn ? "what is advertising"
+                                                       : "scan first", 0, bn > 0 };
+            rows[2] = (bas_row_t){ "Attacks", b1, 0, s_engage.locked };
+            /* BLE addresses nobody, so it needs an authorisation but not a
+             * network. Making the operator pick a Wi-Fi target in order to
+             * authorise a Bluetooth emission was incoherent, and made this
+             * section look broken until Wi-Fi had been visited first. */
+            rows[3] = (bas_row_t){ "Authorise this work",
+                                   s_engage.locked ? s_engage.label
+                                                   : "name it, no network needed",
+                                   0, !s_engage.locked };
+            if (redraw) {
+                bas_ui_list("Bluetooth", NULL, rows, 4, ble_sel,
+                            "LEFT open   hold LEFT back");
+                redraw = false;
             }
-            redraw = true;
+            if (next) { ble_sel = (ble_sel + 1) % 4; redraw = true; }
+            if (back) { st_cur = ST_HOME; redraw = true; break; }
+            int hit = tap ? bas_ui_list_hit(tx, ty, ble_sel, 4) : -1;
+            if (hit >= 0) {
+                if (hit == ble_sel) { accept = true; }
+                else { ble_sel = hit; redraw = true; }
+            }
+            if (accept && rows[ble_sel].enabled) {
+                switch (ble_sel) {
+                case 0:
+                    if (sc) { bas_ble_scan_stop(); }
+                    else    { bas_ble_scan_reset(); bas_ble_scan_start(); }
+                    break;
+                case 1: bdev_sel = 0; st_cur = ST_BLE_DEV; break;
+                case 2:
+                    cur_fams = BLE_FAMS;
+                    cur_fam_n = BLE_FAM_N;
+                    atk_sel = 0;
+                    st_cur = ST_ATTACKS;
+                    break;
+                case 3:
+                    label[0] = '\0';
+                    label_is_area = true;
+                    st_cur = ST_LABEL;
+                    break;
+                default: break;
+                }
+                redraw = true;
+            }
             break;
+        }
+
+        case ST_BLE_DEV: {
+            int bn = 0;
+            const bas_ble_dev_t *bd = bas_ble_devices(&bn);
+            /* Redrawn every pass rather than on change: this list is live and
+             * a device arriving is the thing the operator is waiting for. */
+            bas_ui_ble_devices(bd, bn, bdev_sel,
+                               bas_ble_longest_tracker_dwell(now_ms()));
+            if (back) { st_cur = ST_BLE; redraw = true; break; }
+            if (next && bn) { bdev_sel = (bdev_sel + 1) % bn; redraw = true; }
+            int hit = tap ? bas_ui_list_hit(tx, ty, bdev_sel, bn) : -1;
+            if (hit >= 0) { bdev_sel = hit; }
+            if (accept) { st_cur = ST_BLE; redraw = true; }
+            break;
+        }
 
         case ST_RECON: {
             bool on = bas_sniff_active();

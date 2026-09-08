@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT */
 #include "harness.h"
 #include "basanos/engage.h"
+#include "basanos/family.h"
 
 static bas_ap_t target_sunshine(void)
 {
@@ -135,4 +136,52 @@ void suite_engage(void)
     bas_engage_note_run(&e);
     bas_engage_note_run(&e);
     CHECK_EQ(e.runs, 2);
+}
+
+void suite_engage_area(void)
+{
+    SUITE("engage: a label-only lock authorises work but scopes no network");
+
+    bas_engagement_t e;
+    bas_engage_clear(&e);
+
+    CHECK_EQ(bas_engage_lock_area(&e, "", "op", 1000, 60000), BAS_ERR_NO_LABEL);
+    CHECK_EQ(bas_engage_lock_area(&e, "BLE SWEEP", "op", 1000, 60000), BAS_OK);
+    CHECK(e.locked);
+    CHECK(!e.has_target);
+    CHECK_EQ(bas_engage_check(&e, 2000), BAS_OK);
+
+    /* Families that address nobody may run. */
+    bas_plan_t p;
+    bas_plan_default(&p, BAS_FAM_BLE_ADV);
+    CHECK_EQ(bas_plan_validate(&p, 1, &e, 2000), BAS_OK);
+    bas_plan_default(&p, BAS_FAM_PROBE_REQ);
+    CHECK_EQ(bas_plan_validate(&p, 1, &e, 2000), BAS_OK);
+
+    /* Every family that addresses a network is refused. It widens nothing. */
+    bas_plan_default(&p, BAS_FAM_DEAUTH);
+    CHECK_EQ(bas_plan_validate(&p, 2, &e, 2000), BAS_ERR_NO_TARGET);
+    bas_plan_default(&p, BAS_FAM_EVIL_TWIN);
+    CHECK_EQ(bas_plan_validate(&p, 2, &e, 2000), BAS_ERR_NO_TARGET);
+    bas_plan_default(&p, BAS_FAM_PMKID);
+    CHECK_EQ(bas_plan_validate(&p, 2, &e, 2000), BAS_ERR_NO_TARGET);
+
+    /* And no frame may be addressed under it. */
+    uint8_t any[6] = { 0x02,0x11,0x22,0x33,0x44,0x55 };
+    CHECK_EQ(bas_engage_permits_frame(&e, any, any, 2000), BAS_ERR_NO_TARGET);
+
+    /* There is no target to narrow to a client. */
+    CHECK_EQ(bas_engage_set_client(&e, any), BAS_ERR_NO_TARGET);
+
+    SUITE("engage: a targeted lock still sets has_target");
+
+    bas_ap_t t;
+    memset(&t, 0, sizeof(t));
+    bas_strlcpy(t.ssid, "lab", sizeof(t.ssid));
+    t.bssid[0] = 0x02; t.bssid[5] = 0x01;
+    t.channel = 6;
+    CHECK_EQ(bas_engage_lock(&e, &t, "JOB-1", "op", 1000, 60000), BAS_OK);
+    CHECK(e.has_target);
+    bas_plan_default(&p, BAS_FAM_DEAUTH);
+    CHECK_EQ(bas_plan_validate(&p, 2, &e, 2000), BAS_OK);
 }
