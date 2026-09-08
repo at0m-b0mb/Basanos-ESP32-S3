@@ -1443,6 +1443,9 @@ void app_main(void)
      * passing contact is not mistaken for the start of an arm. */
     uint32_t touch_arm_since = 0;
     uint32_t touch_back_since = 0;
+    /* How the arming gauge was entered, so the same gesture has to
+     * be sustained to finish it. */
+    bool     arm_by_chord = false;
     /* Whichever section's list is open. The detail, hold and run screens are
      * identical for Wi-Fi and BLE, so they follow this rather than each
      * knowing which section they came from. */
@@ -1534,7 +1537,13 @@ void app_main(void)
         static uint32_t next_since;
         static bool     next_fired;
         bool right_back = false;
-        if (held(BOARD_BTN_NEXT)) {
+        /* RIGHT alone is back. RIGHT together with LEFT is half of the arming
+         * chord, and must not also be read as a request to leave -- so the
+         * timer is abandoned the moment the second button joins. */
+        if (held(BOARD_BTN_NEXT) && held(BOARD_BTN_ACCEPT)) {
+            next_since = 0;
+            next_fired = true;          /* no back on this press */
+        } else if (held(BOARD_BTN_NEXT)) {
             if (next_since == 0u) {
                 next_since = now_ms();
             } else if (!next_fired && now_ms() - next_since >= 600u) {
@@ -1804,7 +1813,11 @@ void app_main(void)
              * round -- the opposite would arm from a gesture aimed elsewhere. */
             bool arm_now = false;
             if (ready && fs->klass == BAS_CLASS_DISRUPTIVE) {
-                if (held(BOARD_BTN_ACCEPT)) {
+                if (held(BOARD_BTN_ACCEPT) && held(BOARD_BTN_NEXT)) {
+                    /* Both buttons at once. A chord cannot be struck by a
+                     * pocket or a single mis-aimed thumb, which is the whole
+                     * reason a disruptive family asks for one. */
+                    arm_by_chord = true;
                     arm_now = true;
                 } else {
                     bas_touch_t t;
@@ -1815,9 +1828,13 @@ void app_main(void)
                         touch_back_since = 0;
                     } else if (bas_ui_arm_hit(t.x, t.y)) {
                         touch_back_since = 0;
+                        /* Only long enough to rule out a graze. The three
+                         * seconds of deliberation happen on the gauge, where
+                         * the operator can watch them pass and let go. */
                         if (touch_arm_since == 0u) {
                             touch_arm_since = now_ms();
-                        } else if (now_ms() - touch_arm_since >= 300u) {
+                        } else if (now_ms() - touch_arm_since >= 120u) {
+                            arm_by_chord = false;
                             arm_now = true;
                         }
                     } else {
@@ -1862,7 +1879,11 @@ void app_main(void)
         }
 
         case ST_HOLD: {
-            const uint32_t HOLD_MS = 1500u;
+            /* Three seconds, and this is now the ONLY deliberation window.
+             * It used to be a 1500 ms gauge followed by a separate 3-2-1
+             * countdown -- two waits doing one job, and neither of them long
+             * enough on its own to read as a decision. */
+            const uint32_t HOLD_MS = 3000u;
             uint32_t t = now_ms();
             /* A mechanical contact bounces, and GPIO 0 doubles as the BOOT
              * strapping pin, so a single not-held sample mid-hold is noise
@@ -1871,7 +1892,13 @@ void app_main(void)
              * than three polls. */
             const int RELEASE_SAMPLES = 3;
 
-            if (input_held_down()) {
+            /* Finishing must need the same gesture that started it. A chord
+             * that decays to one button is a release, not a hold. */
+            bool still_held = arm_by_chord
+                ? (held(BOARD_BTN_ACCEPT) && held(BOARD_BTN_NEXT))
+                : input_held_down();
+
+            if (still_held) {
                 hold_gap = 0;
                 if (hold_start == 0u) { hold_start = t; }
                 uint32_t h = t - hold_start;
@@ -1909,37 +1936,16 @@ void app_main(void)
 
         do_run: {
                 bas_family_t f = cur_fams[atk_sel];
-                bool aborted = false;
-                /* The operator arrives here still holding whatever completed
-                 * the arming gesture. An abort must be a NEW deliberate act,
-                 * so nothing counts until that hold has been released --
-                 * otherwise the press that armed the run is also the press
-                 * that cancels it. */
-                bool released = false;
-                for (int left = 3; left > 0 && !aborted; left--) {
-                    bas_ui_arm(f, &s_engage, left);
-                    for (int i = 0; i < 10; i++) {
-                        uint16_t ax, ay;
-                        bool touching = input_held_down();
-                        if (!touching) { released = true; }
-
-                        bool tapped = ui_tap(&ax, &ay);
-                        bool pressed = (input_poll() != EV_NONE);
-                        if (released && (tapped || pressed)) {
-                            aborted = true;
-                            break;
-                        }
-                        vTaskDelay(pdMS_TO_TICKS(100));
-                    }
-                }
-                if (aborted) {
-                    bas_ui_note("ABORTED", "Nothing was sent.", NULL, TH_INK3);
-                    vTaskDelay(pdMS_TO_TICKS(1500));
-                    role = BAS_ROLE_OPERATOR;
-                    st_cur = ST_ATTACKS;
-                    redraw = true;
-                    break;
-                }
+                /* No countdown here any more.
+                 *
+                 * A 3-2-1 screen after a three-second hold is a second wait
+                 * for a decision already made, and it trained the operator to
+                 * sit through a delay rather than to mean the hold. The run
+                 * itself is interruptible by any button or any touch from its
+                 * first frame, so nothing is lost -- the abort is immediate
+                 * instead of merely early. */
+                bas_ui_arm(f, &s_engage, 0);
+                vTaskDelay(pdMS_TO_TICKS(400));
 
                 tx_ctx_t ctx = { .f = f, .budget = bas_plan_frame_budget(&plan) };
                 s_abort = false;

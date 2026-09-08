@@ -580,7 +580,7 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
             const char *lbl = "HOLD TO ARM";
             bas_text(c, (W - bas_text_width(lbl, 1)) / 2,
                      BAS_ARM_Y0 + (h / 2) - 3, lbl, TH_PAPER, 1);
-            foot(c, "hold elsewhere to go back");
+            foot(c, "hold 3s to arm   hold elsewhere back");
         } else {
             foot(c, "LEFT to arm");
         }
@@ -632,9 +632,19 @@ void bas_ui_arm(bas_family_t f, const bas_engagement_t *e, int left)
     bas_text_clip(c, TH_PAD, 88, e->target.hidden ? "(hidden)" : e->target.ssid,
                   TH_INK3, 1, W - 2 * TH_PAD);
 
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%d", left);
-    bas_text(c, (W - bas_text_width(buf, 8)) / 2, 116, buf, TH_SHINE, 8);
+    /* `left` is a countdown that no longer runs: the three-second hold is the
+     * deliberation, and a second wait after it was a delay rather than a
+     * decision. Zero means "go now", and a giant 0 on screen would be a
+     * number the operator is waiting on when there is nothing left to wait
+     * for. The parameter stays for the callers that still count. */
+    if (left > 0) {
+        char buf[12];               /* an int is up to 11 characters */
+        snprintf(buf, sizeof(buf), "%d", left);
+        bas_text(c, (W - bas_text_width(buf, 8)) / 2, 116, buf, TH_SHINE, 8);
+    } else {
+        const char *g = "GO";
+        bas_serif_text(c, (W - bas_text_width(g, 4)) / 2, 124, g, TH_SHINE, 4);
+    }
 
     foot(c, "any button aborts");
     bas_display_flush();
