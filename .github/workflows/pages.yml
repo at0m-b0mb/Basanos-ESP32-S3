@@ -6,9 +6,16 @@
 # nothing useful on screen. A same-origin copy avoids that entirely.
 name: pages
 
+# Triggered from main, not from the tag.
+#
+# The github-pages environment only accepts deployments from the default
+# branch, so a tag-triggered run builds the site perfectly and is then refused
+# at the deploy step. Tagging a release moves main too, so building from main
+# publishes the same commit -- and the version below is read from the nearest
+# tag rather than from the ref, so the page still names the release.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # git describe needs the tags
 
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
@@ -47,7 +56,10 @@ jobs:
           cp build/basanos-esp32s3.bin _site/firmware.bin
           cp assets/banner.svg _site/ 2>/dev/null || true
           # The manifest points at the same-origin copy, never the release.
-          sed -i "s/__VERSION__/${GITHUB_REF_NAME:-dev}/" _site/manifest.json
+          # The nearest tag, so the page names the release rather than the
+          # branch it happened to be built from.
+          VER="$(git describe --tags --abbrev=0 2>/dev/null || echo dev)"
+          sed -i "s/__VERSION__/${VER}/" _site/manifest.json
 
       - uses: actions/upload-pages-artifact@v3
         with:

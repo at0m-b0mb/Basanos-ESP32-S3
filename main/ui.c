@@ -565,7 +565,7 @@ void bas_ui_attack(bas_family_t f, const bas_plan_t *p,
         }
         bas_text_clip(c, TH_PAD, 190, e->label, TH_BRASS, 1, W - 2 * TH_PAD);
         foot(c, s->klass == BAS_CLASS_DISRUPTIVE
-                    ? "hold LEFT to arm   release cancels"
+                    ? "hold LEFT arms   swipe back"
                     : "LEFT to arm");
     }
     bas_display_flush();
@@ -599,7 +599,8 @@ void bas_ui_hold(bas_family_t f, const bas_engagement_t *e, int pct)
     bas_text(c, (W - bas_text_width(buf, 2)) / 2, 178, buf,
              pct > 0 ? TH_INK : TH_INK3, 2);
 
-    foot(c, pct > 0 ? "keep holding" : "hold LEFT, or the screen");
+    foot(c, pct > 0 ? "keep holding   release cancels"
+                    : "hold LEFT, or the screen");
     bas_display_flush();
 }
 

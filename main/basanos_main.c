@@ -1501,8 +1501,44 @@ void app_main(void)
             continue;
         }
 
+        /* Swipes, and why they are not a convenience.
+         *
+         * BACK is a 600 ms hold of the left button. On a disruptive family's
+         * detail screen that same hold is the arming gesture, and arming wins
+         * because it fires on the press -- so on exactly the screens where an
+         * operator most wants out (deauth, opened by accident) there was no
+         * way back at all. Three buttons cannot express both.
+         *
+         * So the glass carries the escape, the way a phone does: swipe right
+         * to go back one level, swipe up to return home. These are checked
+         * before anything else consumes the input. */
+        bas_gesture_t sw = bas_touch_swipe();
+
+        /* Either direction on each axis, deliberately.
+         *
+         * The controller's datasheet numbers slide-down as 0x01 and slide-up
+         * as 0x02, which is the inverse of the header's names, and CST816
+         * variants ship with different firmware. Betting on one polarity and
+         * losing would leave the operator trapped on exactly the screen this
+         * exists to escape. Nothing else uses swipes, so both directions on an
+         * axis mean the same thing and the escape cannot be wrong. */
+        bool swipe_back = (sw == BAS_GESTURE_RIGHT || sw == BAS_GESTURE_LEFT);
+        bool swipe_home = (sw == BAS_GESTURE_UP    || sw == BAS_GESTURE_DOWN);
+
+        /* A swipe also lands as a finger-down, which would otherwise read as a
+         * tap and activate whatever row it crossed. */
+        if (sw != BAS_GESTURE_NONE) {
+            tap = false;
+        }
+
+        if (swipe_home && st_cur != ST_HOME) {
+            st_cur = ST_HOME;
+            redraw = true;
+            continue;
+        }
+
         bool accept = (ev == EV_ACCEPT);
-        bool back   = (ev == EV_BACK);
+        bool back   = (ev == EV_BACK) || swipe_back;
         bool next   = (ev == EV_NEXT);
 
         switch (st_cur) {
@@ -1727,6 +1763,10 @@ void app_main(void)
              * gesture across both screens, which is what the footer describes.
              * BACK cannot fire here because the transition happens well inside
              * its 600 ms threshold. */
+            /* Before arming, not after: this is the screen the escape exists
+             * for, and a swipe must beat the hold that would otherwise arm. */
+            if (back) { st_cur = ST_ATTACKS; redraw = true; break; }
+
             if (ready && fs->klass == BAS_CLASS_DISRUPTIVE && input_held_down()) {
                 plan = probe;
                 hold_start = 0;
@@ -1735,8 +1775,6 @@ void app_main(void)
                 redraw = true;
                 break;
             }
-
-            if (back) { st_cur = ST_ATTACKS; redraw = true; break; }
 
             if ((tap || accept) && ready) {
                 plan = probe;
