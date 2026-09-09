@@ -260,3 +260,64 @@ void suite_region(void)
     CHECK_STR(bas_region_name(BAS_REGION_ETSI), "ETSI");
     CHECK_STR(bas_region_name(BAS_REGION_JP),   "JP");
 }
+
+void suite_region_widen(void)
+{
+    SUITE("region: a target widens the clamp to reach its own channel");
+
+    /* The case this exists for: a phone hotspot on channel 13 in a building
+     * whose beacons all claim US. Inferring from the room said FCC, the clamp
+     * stopped at 11, and the network was simply unreachable -- the instrument
+     * reported a refusal where the operator wanted a result. */
+    bas_region_set(BAS_REGION_FCC);
+    CHECK(bas_region_check_channel(13) != BAS_OK);
+    CHECK(bas_region_widen_for(13));
+    CHECK(bas_region_get() == BAS_REGION_ETSI);
+    CHECK(bas_region_check_channel(13) == BAS_OK);
+
+    /* Channel 14 is Japan alone. */
+    bas_region_set(BAS_REGION_FCC);
+    CHECK(bas_region_widen_for(14));
+    CHECK(bas_region_get() == BAS_REGION_JP);
+    CHECK(bas_region_check_channel(14) == BAS_OK);
+
+    SUITE("region: widening never narrows");
+
+    /* A target on channel 6 must not pull an already-wide clamp back down and
+     * quietly forbid a channel the operator had allowed on purpose. */
+    bas_region_set(BAS_REGION_JP);
+    CHECK(!bas_region_widen_for(6));
+    CHECK(bas_region_get() == BAS_REGION_JP);
+    CHECK(!bas_region_widen_for(13));
+    CHECK(bas_region_get() == BAS_REGION_JP);
+
+    bas_region_set(BAS_REGION_ETSI);
+    CHECK(!bas_region_widen_for(1));
+    CHECK(bas_region_get() == BAS_REGION_ETSI);
+
+    SUITE("region: an already-reachable channel changes nothing");
+
+    /* The return value is what the caller prints, so a false positive here
+     * would announce a change that did not happen. */
+    bas_region_set(BAS_REGION_FCC);
+    CHECK(!bas_region_widen_for(11));
+    CHECK(bas_region_get() == BAS_REGION_FCC);
+
+    SUITE("region: a nonsense channel is refused, not widened for");
+
+    bas_region_set(BAS_REGION_FCC);
+    CHECK(!bas_region_widen_for(0));
+    CHECK(!bas_region_widen_for(15));
+    CHECK(!bas_region_widen_for(255));
+    CHECK(bas_region_get() == BAS_REGION_FCC);
+
+    CHECK(bas_region_for_channel(1)  == BAS_REGION_FCC);
+    CHECK(bas_region_for_channel(11) == BAS_REGION_FCC);
+    CHECK(bas_region_for_channel(12) == BAS_REGION_ETSI);
+    CHECK(bas_region_for_channel(13) == BAS_REGION_ETSI);
+    CHECK(bas_region_for_channel(14) == BAS_REGION_JP);
+    CHECK(bas_region_for_channel(0)  == BAS_REGION_FCC);
+    CHECK(bas_region_for_channel(99) == BAS_REGION_FCC);
+
+    bas_region_set(BAS_REGION_FCC);
+}

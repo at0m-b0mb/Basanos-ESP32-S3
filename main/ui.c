@@ -106,6 +106,35 @@ void bas_ui_list(const char *title, const char *right,
 
     int first = (sel >= LIST_ROWS) ? sel - LIST_ROWS + 1 : 0;
 
+    /* Say that the list continues.
+     *
+     * Five rows fit and the Wi-Fi menu holds ten, so half of it lived below a
+     * fold with nothing on screen admitting the fold existed. An operator
+     * looking for a family that was not in the first five concluded it had not
+     * been built -- which is exactly what happened with PMKID.
+     *
+     * A track the height of the list with a proportional thumb, plus the
+     * position in words, because a 3 px bar alone is easy to miss. */
+    if (n > LIST_ROWS) {
+        const int track_y = LIST_TOP;
+        const int track_h = LIST_ROWS * TH_ROW_H - 2;
+        const int bx      = W - 4;
+        bas_fill(c, bx, track_y, 3, track_h, TH_RULE);
+
+        int thumb_h = (track_h * LIST_ROWS) / n;
+        if (thumb_h < 12) { thumb_h = 12; }
+        int span = n - LIST_ROWS;                 /* > 0 inside this branch */
+        int thumb_y = track_y + ((track_h - thumb_h) * first) / span;
+        bas_fill(c, bx, thumb_y, 3, thumb_h, TH_BRASS);
+
+        /* Both are list indices, but the compiler only knows they are ints,
+         * so the buffer is sized for two of them. */
+        char pos[24];
+        snprintf(pos, sizeof(pos), "%d/%d", sel + 1, n);
+        bas_text(c, W - TH_PAD - bas_text_width(pos, 1) - 4,
+                 H - TH_FOOT_H - 11, pos, TH_INK3, 1);
+    }
+
     for (int i = 0; i < LIST_ROWS; i++) {
         int idx = first + i;
         if (idx >= n) {

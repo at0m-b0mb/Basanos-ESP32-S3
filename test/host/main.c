@@ -16,6 +16,7 @@ int main(void)
     suite_engage_whole_cell();
     suite_family();
     suite_region();
+    suite_region_widen();
     suite_rbac();
     suite_wpa();
     suite_score();

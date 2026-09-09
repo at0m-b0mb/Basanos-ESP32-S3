@@ -184,6 +184,39 @@ void bas_region_set(bas_region_t r)
 
 bas_region_t bas_region_get(void) { return s_region; }
 
+bas_region_t bas_region_for_channel(uint8_t ch)
+{
+    /* Out of range FIRST. Ordering the bands before this test let channel 0
+     * fall into the "<= 13" branch and answer ETSI -- widening the clamp on a
+     * value that means nothing, which is the exact failure the range check is
+     * here to prevent. */
+    if (ch < 1u || ch > 14u) { return BAS_REGION_FCC;  }
+    if (ch <= 11u)           { return BAS_REGION_FCC;  }
+    if (ch <= 13u)           { return BAS_REGION_ETSI; }
+    return BAS_REGION_JP;
+}
+
+bool bas_region_widen_for(uint8_t ch)
+{
+    if (ch < 1u || ch > 14u) {
+        return false;
+    }
+    if (bas_region_check_channel(ch) == BAS_OK) {
+        return false;                 /* already reachable */
+    }
+    bas_region_t want = bas_region_for_channel(ch);
+    if (bas_region_max_channel() >= 14u) {
+        return false;                 /* nothing wider exists */
+    }
+    /* Only ever widens. A target on channel 6 must not pull the clamp back
+     * down and quietly forbid a channel the operator had already allowed. */
+    if (want == bas_region_get()) {
+        return false;
+    }
+    bas_region_set(want);
+    return true;
+}
+
 uint8_t bas_region_max_channel(void)
 {
     switch (s_region) {

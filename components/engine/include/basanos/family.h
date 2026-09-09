@@ -140,6 +140,34 @@ bas_err_t bas_region_check_channel(uint8_t ch);
 bas_region_t bas_region_from_country(const char *cc);
 const char  *bas_region_name(bas_region_t r);
 
+/* The narrowest domain that permits this channel.
+ *
+ * A network is evidence about its own domain: an access point transmitting on
+ * channel 13 is not operating under a plan that stops at 11, whatever the room
+ * around it advertises. So a locked target can widen the clamp to reach it --
+ * see bas_region_widen_for().
+ *
+ * Returns FCC for a channel out of range, since refusing is safer than
+ * widening on a value that means nothing. */
+bas_region_t bas_region_for_channel(uint8_t ch);
+
+/* Widen the clamp just enough to reach `ch`, and never narrow it.
+ *
+ * This exists because the alternative was worse in both directions. Inferring
+ * the domain from the ROOM picks whatever most beacons claim, which is the
+ * right answer for a survey and the wrong one for a target: a phone hotspot on
+ * channel 13 in a building full of channel-1..11 networks was simply
+ * unreachable, and the instrument reported a refusal rather than a result.
+ *
+ * The target is the authorisation boundary everywhere else in Basanos -- one
+ * network, chosen by hand, named in the engagement -- so it is the right thing
+ * to take the channel plan from too.
+ *
+ * Returns true when it changed the region, so the caller can say so. The
+ * operator is told, every time: this can put the radio on a channel their own
+ * regulator does not permit, and that is their call to make knowingly. */
+bool bas_region_widen_for(uint8_t ch);
+
 /* The prefix every SSID and BLE name Basanos invents must carry, so anyone
  * else sniffing the room sees a test rig and not an attack. Enforced by
  * bas_family_label_ok(). */

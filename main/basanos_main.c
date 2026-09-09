@@ -116,6 +116,35 @@ static input_ev_t input_poll(void)
         return EV_POWEROFF;
     }
 
+    /* Both buttons at once is the arming chord, and while it is being formed
+     * neither button may also act on its own.
+     *
+     * This is not a nicety. EV_NEXT fires on the RIGHT press EDGE, so reaching
+     * for the chord changed the attack duration before the second button was
+     * even down; and EV_BACK fires after 600 ms of LEFT, so holding the chord
+     * ejected the operator off the screen they were trying to arm. The chord
+     * was unusable in both directions at once.
+     *
+     * Suppression lasts until BOTH buttons are released, so letting go of one
+     * a moment before the other does not emit a stray tap on the survivor. */
+    static bool chord_latched;
+    {
+        bool a_now = held(BOARD_BTN_ACCEPT);
+        bool n_now = held(BOARD_BTN_NEXT);
+        if (a_now && n_now) {
+            chord_latched = true;
+        }
+        if (chord_latched) {
+            if (!a_now && !n_now) { chord_latched = false; }
+            /* Leave the edge detectors matching reality, so nothing fires
+             * later from a transition that happened during the chord. */
+            accept_was   = a_now;
+            next_was     = n_now;
+            accept_fired = true;
+            return EV_NONE;
+        }
+    }
+
     bool a = held(BOARD_BTN_ACCEPT);
     if (a && !accept_was) { accept_since = t; accept_fired = false; }
     /* Back fires on the threshold rather than on release, so a tap and a hold
@@ -135,6 +164,14 @@ static input_ev_t input_poll(void)
     if (accept_edge) { return EV_ACCEPT; }
     if (next_edge)   { return EV_NEXT; }
     return EV_NONE;
+}
+
+/* The arming chord: both buttons together. Read straight off the pins rather
+ * than through input_poll, because input_poll deliberately reports nothing
+ * while the chord is down. */
+static bool bas_chord_held(void)
+{
+    return held(BOARD_BTN_ACCEPT) && held(BOARD_BTN_NEXT);
 }
 
 static bool input_held_down(void)
@@ -936,11 +973,33 @@ static void console_exec(const bas_cmd_t *c)
             bas_console_reply("no such network — 'list'");
             break;
         }
+        /* Follow the target into its own channel plan.
+         *
+         * A phone hotspot on channel 13 in a building of channel-1..11
+         * networks was unreachable: the room said US, the clamp stopped at 11,
+         * and the instrument refused instead of producing a result. The target
+         * is the authorisation boundary everywhere else here, so it sets the
+         * channel plan too -- an AP transmitting on 13 is not operating under
+         * a plan that stops at 11. */
+        bool widened = bas_region_widen_for(s_scan.ap[idx].channel);
+
         bas_err_t rc = bas_engage_lock(&s_engage, &s_scan.ap[idx], c->text,
                                        "console", now_ms(), BAS_TTL_DEFAULT_MS);
         if (rc != BAS_OK) {
             bas_console_reply("refused: %s", bas_err_str(rc));
         } else {
+            if (widened) {
+                /* Said out loud every time. This can put the radio on a
+                 * channel the operator's own regulator does not permit, and
+                 * that is a decision they should make knowingly rather than
+                 * discover in a log. */
+                bas_console_reply("region widened to %s — the target is on "
+                                  "channel %u",
+                                  bas_region_name(bas_region_get()),
+                                  (unsigned)s_scan.ap[idx].channel);
+                bas_console_reply("  your local rules may not permit that "
+                                  "channel; 'region fcc' puts it back");
+            }
             bas_console_reply("locked %s label='%s' ttl=%us",
                               s_engage.target.hidden ? "(hidden)"
                                                      : s_engage.target.ssid,
@@ -1439,6 +1498,7 @@ void app_main(void)
     int  wps_sel = 0;
     /* Which menu launched a recovery, so dismissing it returns there. */
     bool wps_from_wifi = false;
+    bool widened_ch = false;
     /* When the glass was first touched on an arming screen, so a
      * passing contact is not mistaken for the start of an arm. */
     uint32_t touch_arm_since = 0;
@@ -1699,11 +1759,28 @@ void app_main(void)
                     rc = bas_engage_lock_area(&s_engage, label, "operator",
                                               now_ms(), BAS_TTL_DEFAULT_MS);
                 } else {
+                    /* Follow the target into its own channel plan, exactly as
+                     * the console lock does. Without this a hotspot on channel
+                     * 13 could be selected and named, and then every family
+                     * refused it -- a dead end three screens deep. */
+                    widened_ch = bas_region_widen_for(s_scan.ap[net_sel].channel);
                     rc = bas_engage_lock(&s_engage, &s_scan.ap[net_sel], label,
                                          "operator", now_ms(),
                                          BAS_TTL_DEFAULT_MS);
                 }
                 if (rc == BAS_OK) {
+                    if (widened_ch) {
+                        /* Shown, not just logged: this can put the radio on a
+                         * channel the operator's regulator does not permit. */
+                        static char rl[40];
+                        snprintf(rl, sizeof(rl), "now %s for channel %u",
+                                 bas_region_name(bas_region_get()),
+                                 (unsigned)s_engage.target.channel);
+                        bas_ui_note("Region widened", rl,
+                                    "check your local rules", TH_WARN);
+                        vTaskDelay(pdMS_TO_TICKS(2200));
+                        widened_ch = false;
+                    }
                     ESP_LOGI(TAG, "locked '%s' %s", label,
                              label_is_area ? "(area, no network)"
                                            : s_engage.target.ssid);
@@ -1813,7 +1890,7 @@ void app_main(void)
              * round -- the opposite would arm from a gesture aimed elsewhere. */
             bool arm_now = false;
             if (ready && fs->klass == BAS_CLASS_DISRUPTIVE) {
-                if (held(BOARD_BTN_ACCEPT) && held(BOARD_BTN_NEXT)) {
+                if (bas_chord_held()) {
                     /* Both buttons at once. A chord cannot be struck by a
                      * pocket or a single mis-aimed thumb, which is the whole
                      * reason a disruptive family asks for one. */
@@ -1894,9 +1971,8 @@ void app_main(void)
 
             /* Finishing must need the same gesture that started it. A chord
              * that decays to one button is a release, not a hold. */
-            bool still_held = arm_by_chord
-                ? (held(BOARD_BTN_ACCEPT) && held(BOARD_BTN_NEXT))
-                : input_held_down();
+            bool still_held = arm_by_chord ? bas_chord_held()
+                                           : input_held_down();
 
             if (still_held) {
                 hold_gap = 0;

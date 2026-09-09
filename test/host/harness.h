@@ -46,6 +46,7 @@ void suite_engage_clients(void);
 void suite_engage_whole_cell(void);
 void suite_family(void);
 void suite_region(void);
+void suite_region_widen(void);
 void suite_region(void);
 void suite_region(void);
 void suite_rbac(void);
