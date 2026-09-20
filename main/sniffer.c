@@ -226,11 +226,25 @@ static void note_eapol(const uint8_t *p, size_t len, uint32_t t)
     }
 }
 
+/* Frame body length: what the radio reported, less the FCS it appended.
+ *
+ * rx_ctrl.sig_len is documented as "the length of the reception MPDU", and an
+ * MPDU includes the 4-byte FCS by definition -- a checksum trailer, not part
+ * of the frame body. Every length derived from it was four bytes too long, so an
+ * element walk ran past the last element and into the CRC, where four
+ * arbitrary bytes were read as an element header. The parser's bounds checks
+ * kept that safe, but it still flagged sound beacons as truncated. */
+static inline size_t IRAM_ATTR bas_frame_len(const wifi_promiscuous_pkt_t *pkt)
+{
+    int n = pkt->rx_ctrl.sig_len;
+    return (n > 4) ? (size_t)(n - 4) : 0u;
+}
+
 static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 {
     s_raw++;
     const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
-    if (pkt == NULL || pkt->rx_ctrl.sig_len < (int)sizeof(hdr_t)) {
+    if (pkt == NULL || bas_frame_len(pkt) < sizeof(hdr_t)) {
         return;
     }
 
@@ -242,7 +256,7 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
     uint32_t t       = now_ms();
 
     bas_ftype_t k = bas_ftype_of(ftype, fsubtype);
-    bas_fcount_add(&s_frames, k, (uint16_t)pkt->rx_ctrl.sig_len, t);
+    bas_fcount_add(&s_frames, k, (uint16_t)bas_frame_len(pkt), t);
     bas_chan_note_frame(&s_chan, ch, rssi);
 
     if (k == BAS_FT_BEACON) {
@@ -256,7 +270,7 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
         if (idx >= 0) {
             s_nets.ap[idx].rssi         = rssi;
             s_nets.ap[idx].last_seen_ms = t;
-        } else if ((size_t)pkt->rx_ctrl.sig_len > sizeof(hdr_t) + 12u) {
+        } else if (bas_frame_len(pkt) > sizeof(hdr_t) + 12u) {
             bas_ap_t ap;
             memset(&ap, 0, sizeof(ap));
             memcpy(ap.bssid, h->a3, 6);
@@ -267,7 +281,7 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 
             /* Past the fixed beacon body: timestamp, interval, capability. */
             const uint8_t *ies = &pkt->payload[sizeof(hdr_t) + 12u];
-            size_t ie_len = (size_t)pkt->rx_ctrl.sig_len - sizeof(hdr_t) - 12u;
+            size_t ie_len = bas_frame_len(pkt) - sizeof(hdr_t) - 12u;
             bas_ie_parse(ies, ie_len, &ap, NULL);
             if (ap.channel == 0u) { ap.channel = ch; }
 
@@ -280,9 +294,9 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
 
     if (k == BAS_FT_PROBE_REQ) {
         size_t off = sizeof(hdr_t);
-        if ((size_t)pkt->rx_ctrl.sig_len > off) {
+        if (bas_frame_len(pkt) > off) {
             note_probe(&pkt->payload[off],
-                       (size_t)pkt->rx_ctrl.sig_len - off, h->a2, rssi, t);
+                       bas_frame_len(pkt) - off, h->a2, rssi, t);
         }
         return;
     }
@@ -293,14 +307,14 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
         bas_mac_eq(h->a2, s_watch_bssid)) {
         size_t hlen = sizeof(hdr_t);
         if (ftype == 0u && fsubtype == 11u) {          /* auth response   */
-            if ((size_t)pkt->rx_ctrl.sig_len >= hlen + 6u) {
+            if (bas_frame_len(pkt) >= hlen + 6u) {
                 s_watch.auth_resp = true;
                 s_watch.auth_status =
                     (uint16_t)(pkt->payload[hlen + 4] |
                                (pkt->payload[hlen + 5] << 8));
             }
         } else if (ftype == 0u && fsubtype == 1u) {    /* assoc response  */
-            if ((size_t)pkt->rx_ctrl.sig_len >= hlen + 4u) {
+            if (bas_frame_len(pkt) >= hlen + 4u) {
                 s_watch.assoc_resp = true;
                 s_watch.assoc_status =
                     (uint16_t)(pkt->payload[hlen + 2] |
@@ -309,9 +323,9 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
         } else if (ftype == 2u) {                      /* data: EAPOL?    */
             /* QoS data carries two extra header bytes before the payload. */
             size_t off = hlen + ((fsubtype & 0x08u) ? 2u : 0u);
-            if ((size_t)pkt->rx_ctrl.sig_len > off) {
+            if (bas_frame_len(pkt) > off) {
                 note_eapol(&pkt->payload[off],
-                           (size_t)pkt->rx_ctrl.sig_len - off, t);
+                           bas_frame_len(pkt) - off, t);
             }
         }
     }
@@ -329,10 +343,10 @@ static void IRAM_ATTR on_packet(void *buf, wifi_promiscuous_pkt_type_t type)
             size_t off = sizeof(hdr_t) + ((fsubtype & 0x08u) ? 2u : 0u);
             static const uint8_t snap[] = { 0xAA, 0xAA, 0x03, 0x00, 0x00,
                                             0x00, 0x88, 0x8E };
-            if ((size_t)pkt->rx_ctrl.sig_len > off + sizeof(snap) &&
+            if (bas_frame_len(pkt) > off + sizeof(snap) &&
                 memcmp(&pkt->payload[off], snap, sizeof(snap)) == 0) {
                 note_handshake(&pkt->payload[off + sizeof(snap)],
-                               (size_t)pkt->rx_ctrl.sig_len - off - sizeof(snap),
+                               bas_frame_len(pkt) - off - sizeof(snap),
                                h->a1, h->a2, from_ds);
             }
         }

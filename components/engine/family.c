@@ -316,14 +316,26 @@ bas_err_t bas_plan_validate(bas_plan_t *p,
         return BAS_ERR_ROLE;
     }
 
-    if (s->needs_target) {
-        if (e == NULL) {
-            return BAS_ERR_NO_TARGET;
-        }
+    /* EVERY family that transmits needs a live engagement.
+     *
+     * This check used to live inside the needs_target branch, so the families
+     * that address no network -- the BLE ones -- were never checked against an
+     * engagement at all, and would advertise with nothing locked. "Needs no
+     * target" is a statement about addressing, not about authorisation: a BLE
+     * advertisement is still an emission into someone's air, and the
+     * label-only engagement (bas_engage_lock_area) exists precisely so that
+     * one can be authorised without naming a network. */
+    if (e == NULL) {
+        return BAS_ERR_NO_TARGET;
+    }
+    {
         bas_err_t rc = bas_engage_check(e, now_ms);
         if (rc != BAS_OK) {
             return rc;
         }
+    }
+
+    if (s->needs_target) {
         if (!e->has_target) {
             /* A label-only engagement authorises the work but scopes no
              * network, so every family that addresses one is refused. */

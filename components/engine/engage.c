@@ -139,6 +139,14 @@ bas_err_t bas_engage_add_client(bas_engagement_t *e, const uint8_t mac[6])
     }
     memcpy(e->client[e->client_n], mac, 6);
     e->client_n++;
+    /* Naming a device is an explicit NARROWING, and it cancels whole-cell.
+     *
+     * These were independent flags, and bas_engage_dest() prefers whole_cell,
+     * so selecting a client while it was on left the radio broadcasting to the
+     * entire cell while every screen reported a narrowed scope. An operator
+     * who believes they are aimed at one laptop and is in fact knocking over
+     * the room has lost the only guarantee this device makes. */
+    e->whole_cell = false;
     return BAS_OK;
 }
 
@@ -221,6 +229,13 @@ const uint8_t *bas_engage_dest(const bas_engagement_t *e, uint32_t n)
 {
     if (e == NULL || !e->locked || !e->has_target) {
         return NULL;
+    }
+    /* A selected client always wins over whole-cell. The two are kept mutually
+     * exclusive by the setters, so this is a belt-and-braces guard: if they
+     * ever disagree, the answer must be the NARROWER of the two, never the
+     * wider one. */
+    if (e->client_n > 0u) {
+        return e->client[n % e->client_n];
     }
     if (e->whole_cell) {
         static const uint8_t bcast[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };

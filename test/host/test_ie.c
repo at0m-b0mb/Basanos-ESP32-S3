@@ -211,3 +211,95 @@ void suite_ie(void)
     CHECK_EQ(bas_ie_classify(&z, true), BAS_SEC_WEP);
     CHECK_EQ(bas_ie_classify(NULL, false), BAS_SEC_UNKNOWN);
 }
+
+void suite_ie_akm(void)
+{
+    SUITE("ie: a fast-transition network is not WEP");
+
+    /* The finding that prompted this suite. 802.11r is standard on enterprise
+     * and mesh gear, and its AKM numbers are nowhere near the base ones. An
+     * unrecognised AKM set no posture flag, classification fell through every
+     * branch to the privacy bit, and an ordinary WPA2-Enterprise-FT network
+     * was reported as WEP -- the single most damning verdict this instrument
+     * can produce, on a network that is not vulnerable at all. */
+    static const uint8_t ft_psk[] = {
+        0x00, 0x04, 'r','o','a','m',
+        0x30, 0x14, RSN_BODY(0x04, 0x00, 0x00),   /* AKM 4: FT-PSK        */
+    };
+    bas_ap_t ap;
+    bas_posture_t p;
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(ft_psk, sizeof(ft_psk), &ap, &p) == BAS_OK);
+    CHECK(p.akm_psk);
+    CHECK(!p.akm_unknown);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_WPA2);
+    CHECK(bas_ie_classify(&p, true) != BAS_SEC_WEP);
+
+    static const uint8_t ft_ent[] = {
+        0x00, 0x04, 'c','o','r','p',
+        0x30, 0x14, RSN_BODY(0x03, 0x00, 0x00),   /* AKM 3: FT-802.1X     */
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(ft_ent, sizeof(ft_ent), &ap, &p) == BAS_OK);
+    CHECK(p.akm_enterprise);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_WPA2_ENT);
+
+    static const uint8_t ft_sae[] = {
+        0x00, 0x03, 'w','p','3',
+        0x30, 0x14, RSN_BODY(0x09, 0x00, 0x00),   /* AKM 9: FT-SAE        */
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(ft_sae, sizeof(ft_sae), &ap, &p) == BAS_OK);
+    CHECK(p.akm_sae);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_WPA3);
+
+    /* Suite-B and SAE-EXT-KEY are the other two that were falling through. */
+    static const uint8_t suiteb[] = {
+        0x00, 0x02, 'g','b',
+        0x30, 0x14, RSN_BODY(0x0C, 0x00, 0x00),   /* AKM 12: Suite-B-192  */
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(suiteb, sizeof(suiteb), &ap, &p) == BAS_OK);
+    CHECK(p.akm_enterprise);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_WPA2_ENT);
+
+    static const uint8_t sae_ext[] = {
+        0x00, 0x02, 'x','k',
+        0x30, 0x14, RSN_BODY(0x18, 0x00, 0x00),   /* AKM 24: SAE-EXT-KEY  */
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(sae_ext, sizeof(sae_ext), &ap, &p) == BAS_OK);
+    CHECK(p.akm_sae);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_WPA3);
+
+    SUITE("ie: an AKM from a future amendment is unknown, never WEP");
+
+    /* Every amendment adds suite numbers. The honest answer for one this
+     * table has never seen is "I could not identify it", which is a different
+     * claim from "it is WEP" -- and only one of them is true. */
+    static const uint8_t future[] = {
+        0x00, 0x02, 'f','x',
+        0x30, 0x14, RSN_BODY(0x7F, 0x00, 0x00),   /* AKM 127: not defined */
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(future, sizeof(future), &ap, &p) == BAS_OK);
+    CHECK(p.akm_unknown);
+    CHECK(!p.akm_psk && !p.akm_sae && !p.akm_enterprise && !p.akm_owe);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_UNKNOWN);
+    CHECK(bas_ie_classify(&p, true) != BAS_SEC_WEP);
+
+    SUITE("ie: real WEP is still reported as WEP");
+
+    /* The branch must still work for the case it was written for: privacy bit
+     * set, no RSN element and no WPA vendor element at all. */
+    static const uint8_t wep[] = {
+        0x00, 0x03, 'o','l','d',
+        0x03, 0x01, 0x06,
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(wep, sizeof(wep), &ap, &p) == BAS_OK);
+    CHECK(!p.rsn_present);
+    CHECK(!p.akm_unknown);
+    CHECK(bas_ie_classify(&p, true) == BAS_SEC_WEP);
+    CHECK(bas_ie_classify(&p, false) == BAS_SEC_OPEN);
+}

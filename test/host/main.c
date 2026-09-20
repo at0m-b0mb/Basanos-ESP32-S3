@@ -13,8 +13,10 @@ int main(void)
     suite_engage();
     suite_engage_area();
     suite_engage_clients();
+    suite_engage_scope_exclusive();
     suite_engage_whole_cell();
     suite_family();
+    suite_family_ble_auth();
     suite_region();
     suite_region_widen();
     suite_rbac();
@@ -22,7 +24,9 @@ int main(void)
     suite_score();
     suite_station();
     suite_ie();
+    suite_ie_akm();
     suite_wps();
+    suite_wps_split();
     suite_wpspin();
     suite_pixie();
     suite_survey();

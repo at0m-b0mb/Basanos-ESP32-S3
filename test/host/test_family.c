@@ -321,3 +321,60 @@ void suite_region_widen(void)
 
     bas_region_set(BAS_REGION_FCC);
 }
+
+void suite_family_ble_auth(void)
+{
+    SUITE("family: a family that needs no target still needs an engagement");
+
+    /* The engagement check used to sit INSIDE the needs_target branch, so the
+     * BLE families -- the only ones with needs_target == false -- were never
+     * checked against an engagement at all and would advertise with nothing
+     * locked. "Needs no target" is a statement about addressing, not about
+     * authorisation. */
+    bas_engagement_t none;
+    bas_engage_clear(&none);
+
+    const bas_family_t ble[] = {
+        BAS_FAM_BLE_ADV, BAS_FAM_BLE_TRACKER, BAS_FAM_BLE_NAMES,
+        BAS_FAM_BLE_BEACON, BAS_FAM_BLE_SWARM, BAS_FAM_BLE_PERIPHERAL,
+    };
+    for (size_t i = 0; i < sizeof(ble) / sizeof(ble[0]); i++) {
+        const bas_family_spec_t *s = bas_family(ble[i]);
+        CHECK(s != NULL);
+        CHECK(!s->needs_target);              /* the precondition for this bug */
+
+        bas_plan_t p;
+        bas_plan_default(&p, ble[i]);
+        CHECK(bas_plan_validate(&p, BAS_ROLE_ADMIN, &none, 1000u) != BAS_OK);
+
+        /* A NULL engagement is the same refusal, not a crash or a pass. */
+        bas_plan_default(&p, ble[i]);
+        CHECK(bas_plan_validate(&p, BAS_ROLE_ADMIN, NULL, 1000u) != BAS_OK);
+    }
+
+    SUITE("family: a label-only engagement authorises BLE and nothing aimed");
+
+    /* This is why the fix is "engagement required" rather than "target
+     * required": BLE has no network to name, and bas_engage_lock_area exists
+     * so that an emission with no target can still be authorised. */
+    bas_engagement_t area;
+    bas_engage_clear(&area);
+    CHECK(bas_engage_lock_area(&area, "ble-authorised", "tester",
+                               1000u, 60000u) == BAS_OK);
+
+    bas_plan_t p;
+    bas_plan_default(&p, BAS_FAM_BLE_ADV);
+    CHECK(bas_plan_validate(&p, BAS_ROLE_ADMIN, &area, 2000u) == BAS_OK);
+
+    /* ...but it still scopes no network, so anything that addresses one is
+     * refused on the same engagement. */
+    bas_plan_default(&p, BAS_FAM_DEAUTH);
+    CHECK(bas_plan_validate(&p, BAS_ROLE_ADMIN, &area, 2000u) != BAS_OK);
+
+    SUITE("family: an expired engagement stops BLE too");
+
+    /* The TTL is the other half of the lock. A BLE family that skipped the
+     * engagement check also skipped its expiry. */
+    bas_plan_default(&p, BAS_FAM_BLE_TRACKER);
+    CHECK(bas_plan_validate(&p, BAS_ROLE_ADMIN, &area, 1000u + 60001u) != BAS_OK);
+}

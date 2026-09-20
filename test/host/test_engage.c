@@ -354,3 +354,80 @@ void suite_engage_whole_cell(void)
     CHECK_EQ(bas_engage_permits_frame(&e, bcast, t.bssid, 601000),
              BAS_ERR_EXPIRED);
 }
+
+void suite_engage_scope_exclusive(void)
+{
+    SUITE("engage: naming a client cancels whole-cell");
+
+    /* whole_cell and the client list were independent flags, and
+     * bas_engage_dest() preferred whole_cell -- so selecting a client while
+     * whole-cell was on left the radio broadcasting to the entire cell while
+     * every screen reported a narrowed scope. An operator who believes they
+     * are aimed at one laptop, and is in fact knocking over the room, has lost
+     * the only guarantee this device makes. */
+    bas_ap_t ap;
+    memset(&ap, 0, sizeof(ap));
+    memcpy(ap.ssid, "cell", 5);
+    ap.channel = 6;
+    const uint8_t bssid[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    memcpy(ap.bssid, bssid, 6);
+
+    bas_engagement_t e;
+    bas_engage_clear(&e);
+    CHECK(bas_engage_lock(&e, &ap, "scope", "tester", 1000u, 60000u) == BAS_OK);
+    CHECK(bas_engage_set_whole_cell(&e, true) == BAS_OK);
+    CHECK(e.whole_cell);
+    CHECK(bas_mac_is_broadcast(bas_engage_dest(&e, 0)));
+
+    const uint8_t sta[6] = { 0x0A, 0x11, 0x22, 0x33, 0x44, 0x55 };
+    CHECK(bas_engage_add_client(&e, sta) == BAS_OK);
+
+    /* The narrowing must be real, not just displayed. */
+    CHECK(!e.whole_cell);
+    CHECK(e.client_n == 1u);
+    CHECK(!bas_mac_is_broadcast(bas_engage_dest(&e, 0)));
+    CHECK(bas_mac_eq(bas_engage_dest(&e, 0), sta));
+    CHECK(bas_engage_dest_count(&e) == 1u);
+
+    SUITE("engage: turning whole-cell on drops the named devices");
+
+    /* The other direction: a broadcast already reaches every station, so a
+     * client list alongside it would imply a narrowing that is not happening. */
+    CHECK(bas_engage_set_whole_cell(&e, true) == BAS_OK);
+    CHECK(e.client_n == 0u);
+    CHECK(e.whole_cell);
+    CHECK(bas_mac_is_broadcast(bas_engage_dest(&e, 0)));
+
+    SUITE("engage: dest and dest_count never disagree");
+
+    /* dest_count counted the client list while dest() returned broadcast, so a
+     * transmit loop iterated "3 clients" and sent three broadcasts. Whatever
+     * the flags say, these two must describe the same set. */
+    bas_engage_clear_clients(&e);
+    CHECK(bas_engage_set_whole_cell(&e, false) == BAS_OK);
+    const uint8_t a1[6] = { 0x0A, 0, 0, 0, 0, 1 };
+    const uint8_t a2[6] = { 0x0A, 0, 0, 0, 0, 2 };
+    CHECK(bas_engage_add_client(&e, a1) == BAS_OK);
+    CHECK(bas_engage_add_client(&e, a2) == BAS_OK);
+    CHECK(bas_engage_dest_count(&e) == 2u);
+    for (uint32_t i = 0; i < bas_engage_dest_count(&e); i++) {
+        const uint8_t *d = bas_engage_dest(&e, i);
+        CHECK(d != NULL);
+        CHECK(!bas_mac_is_broadcast(d));
+    }
+
+    /* And if the two flags were ever forced into disagreement, the answer must
+     * be the NARROWER one. */
+    e.whole_cell = true;                       /* reach past the setters */
+    CHECK(!bas_mac_is_broadcast(bas_engage_dest(&e, 0)));
+    CHECK(bas_mac_eq(bas_engage_dest(&e, 0), a1));
+
+    SUITE("engage: set_client replaces the set and still cancels whole-cell");
+
+    bas_engage_clear(&e);
+    CHECK(bas_engage_lock(&e, &ap, "scope", "tester", 1000u, 60000u) == BAS_OK);
+    CHECK(bas_engage_set_whole_cell(&e, true) == BAS_OK);
+    CHECK(bas_engage_set_client(&e, sta) == BAS_OK);
+    CHECK(!e.whole_cell);
+    CHECK(e.client_n == 1u);
+}

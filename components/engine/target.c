@@ -61,8 +61,24 @@ int bas_scan_observe(bas_scan_t *s, const bas_ap_t *ap)
         /* Update in place. first_seen is the identity of the sighting and must
          * survive: a detector test cares how long an AP has been around. */
         uint32_t first = s->ap[idx].first_seen_ms;
+
+        /* Information elements survive a sighting that carries none.
+         *
+         * A channel scan returns no IEs, so its record has an empty WPS
+         * field -- and a plain overwrite threw away everything the
+         * promiscuous receiver had already learned about this AP. A scan
+         * after a listen silently erased the findings the listen produced.
+         * Only a sighting that actually carried elements may replace them. */
+        bas_wps_t  keep_wps  = s->ap[idx].wps;
+        bool       keep_seen = s->ap[idx].ie_seen;
+
         s->ap[idx] = *ap;
         s->ap[idx].first_seen_ms = first;
+
+        if (!ap->ie_seen && keep_seen) {
+            s->ap[idx].wps     = keep_wps;
+            s->ap[idx].ie_seen = true;
+        }
         return idx;
     }
 

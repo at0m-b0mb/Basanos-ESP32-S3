@@ -279,6 +279,19 @@ static esp_err_t bas_tx_run_ble(const bas_plan_t *p, const bas_engagement_t *e,
      * is being asked about is in that constancy, so re-advertising would
      * destroy the measurement. */
     if (persistent) {
+        /* Checked HERE, not only in the loop below.
+         *
+         * The persistent shapes advertise once and hold, so for them this one
+         * call IS the whole emission -- it used to happen before the loop that
+         * does the engagement check, which meant a tracker or rogue peripheral
+         * went on air with nothing locked and then discovered it was not
+         * authorised. */
+        bas_err_t pg = bas_engage_check(e, now_ms());
+        if (pg != BAS_OK) {
+            r.stopped_by = pg;
+            if (out != NULL) { *out = r; }
+            return ESP_ERR_INVALID_STATE;
+        }
         char name[24];
         snprintf(name, sizeof(name), BAS_TEST_PREFIX "%s",
                  (fam == BAS_FAM_BLE_PERIPHERAL) ? "PERIPH" : "TRK");
@@ -357,6 +370,19 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
     bas_tx_result_t r;
     memset(&r, 0, sizeof(r));
 
+    /* Publish the zeroed result IMMEDIATELY, before anything can return.
+     *
+     * Two early returns below used to leave *out untouched, and callers
+     * declare their bas_tx_result_t uninitialised -- so a refusal handed back
+     * a stack full of garbage. That is not a cosmetic bug: the caller reads
+     * res.frames_sent to decide whether to DISCARD the run, and a garbage
+     * non-zero there keeps a run that never transmitted on the scorecard,
+     * where it ages into a MISSED that blames the detector for a burst the
+     * radio refused to send. Doctrine: never score what was not emitted. */
+    if (out != NULL) {
+        *out = r;
+    }
+
     if (plan == NULL || e == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -416,6 +442,8 @@ esp_err_t bas_tx_run(const bas_plan_t *plan,
     if (rc != ESP_OK) {
         ESP_LOGE(TAG, "set_channel %u: %s", (unsigned)ch, esp_err_to_name(rc));
         if (karma) { bas_sniff_karma_arm(false); }
+        r.stopped_by = BAS_ERR_CHANNEL;
+        if (out != NULL) { *out = r; }
         return rc;
     }
 

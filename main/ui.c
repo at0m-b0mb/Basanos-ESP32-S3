@@ -167,15 +167,9 @@ void bas_ui_list(const char *title, const char *right,
         }
     }
 
-    /* A scroll hint only when there is more than fits — no ornament that
-     * carries no information. */
-    if (n > LIST_ROWS) {
-        int track = LIST_ROWS * TH_ROW_H;
-        int knob  = track * LIST_ROWS / n;
-        if (knob < 8) { knob = 8; }
-        int pos = (n > 1) ? (track - knob) * sel / (n - 1) : 0;
-        bas_fill(c, W - 3, LIST_TOP + pos, 2, knob, TH_RULE2);
-    }
+    /* The scrollbar is drawn once, above. A second hint used to be drawn here
+     * from the SELECTION index while the one above tracks the SCROLL offset --
+     * two bars, two different positions, overlapping at the same edge. */
 
     foot(c, footer);
     bas_display_flush();
@@ -1170,7 +1164,11 @@ void bas_ui_ble_devices(const bas_ble_dev_t *d, int n, int sel,
         snprintf(foot, sizeof(foot), "longest dwell %us   hold LEFT back",
                  (unsigned)(tracker_dwell_ms / 1000u));
     } else {
-        snprintf(foot, sizeof(foot), "hold LEFT back");
+        /* The tilde on every kind means "looks like", and an operator who does
+         * not know that reads an inference as an identification. It is said on
+         * the screen that shows them, because a caveat only in the manual is a
+         * caveat nobody has. */
+        snprintf(foot, sizeof(foot), "~ = looks like   hold LEFT back");
     }
 
     bas_ui_list("Bluetooth", right, rows, n, sel, foot);

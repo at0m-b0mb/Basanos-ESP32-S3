@@ -33,6 +33,8 @@ static void reader(void *arg)
 {
     char line[BAS_LINE_MAX];
     size_t len = 0;
+    /* True while skipping the remainder of a line too long to hold. */
+    bool   discarding = false;
 
     while (s_active) {
         uint8_t ch;
@@ -64,15 +66,29 @@ static void reader(void *arg)
                  * the measurement anyway. */
                 (void)xQueueSend(s_q, &a, 0);
             }
+            discarding = false;       /* the over-long line ends here too */
             continue;
         }
 
+        if (discarding) {
+            /* Still inside an over-long line. Everything up to the next
+             * newline belongs to it. */
+            continue;
+        }
         if (len + 1u < sizeof(line)) {
             line[len++] = (char)ch;
         } else {
-            /* Overlong: drop it rather than parse a truncated line that might
-             * mean something different from what was sent. */
+            /* Over-long: drop the WHOLE line, not just the buffer.
+             *
+             * Resetting len alone discarded the first 192 bytes and then
+             * assembled the remainder as if it were a fresh line -- so the
+             * tail of an over-long line was parsed on its own, which is
+             * exactly what bas_alarm_parse's "the prefix must start the line"
+             * rule exists to prevent. A detector name appearing mid-line
+             * could then be read as an alarm that was never raised, and a
+             * false CAUGHT is the worst output this instrument can produce. */
             len = 0;
+            discarding = true;
         }
     }
     vTaskDelete(NULL);

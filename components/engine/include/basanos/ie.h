@@ -41,6 +41,13 @@ typedef struct {
     bool akm_sae;           /* WPA3                                        */
     bool akm_owe;           /* opportunistic wireless encryption           */
 
+    /* An AKM suite this parser does not know. Kept because "unrecognised" and
+     * "absent" must not collapse into the same answer: the first means the
+     * network is protected by something newer than this table, the second
+     * means it is not protected at all. */
+    bool akm_unknown;
+    uint8_t akm_count;      /* AKM suites advertised, recognised or not     */
+
     bool wps_present;
     bool wps_locked;        /* AP setup locked attribute                   */
 

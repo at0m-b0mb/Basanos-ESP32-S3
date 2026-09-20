@@ -12,3 +12,17 @@ idf_component_register(
 # call never crosses a boundary the linker can rewrite. See main/rawtx.c.
 target_link_libraries(${COMPONENT_LIB} INTERFACE
                       "-Wl,--allow-multiple-definition")
+
+# The WPS state machine's internals.
+#
+# main/wpsatk.c needs the real struct wps_data and struct wps_sm to harvest the
+# Pixie Dust material. These are private headers with no public equivalent.
+#
+# They are INCLUDED rather than mirrored by hand. A hand-written copy of a
+# struct layout is wrong the moment the SDK reorders a field, and it fails
+# silently: the first version of this file omitted three leading members and
+# read every field 12 bytes out, which built a wild pointer from hash bytes.
+# Letting the compiler read the real declaration makes that impossible.
+target_include_directories(${COMPONENT_LIB} PRIVATE
+    "$ENV{IDF_PATH}/components/wpa_supplicant/src"
+    "$ENV{IDF_PATH}/components/wpa_supplicant/esp_supplicant/src")

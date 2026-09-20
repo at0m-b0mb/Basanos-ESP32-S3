@@ -57,6 +57,14 @@ typedef struct {
      * AP is in this list, everything needed to grade its WPS exposure has
      * already been received. Nothing is transmitted to learn it. */
     bas_wps_t wps;
+    /* True once this AP's own beacon has been parsed.
+     *
+     * A channel scan returns no information elements at all, so an AP found
+     * that way has no WPS record -- and an empty record is indistinguishable
+     * from "advertises no WPS" unless this says otherwise. Reporting the two
+     * as the same thing is reporting absence of evidence as evidence of
+     * absence, which is the one thing this instrument may not do. */
+    bool ie_seen;
 } bas_ap_t;
 
 #define BAS_MAX_APS 48

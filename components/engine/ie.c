@@ -5,10 +5,37 @@
 #include <string.h>
 
 /* AKM selector suite types under the 00-0F-AC OUI. */
-#define AKM_8021X 1u
-#define AKM_PSK   2u
-#define AKM_SAE   8u
-#define AKM_OWE  18u
+/* RSN AKM suite types, IEEE 802.11.
+ *
+ * The whole table is here, not just the four common ones. An AKM this parser
+ * does not recognise sets no posture flag, and an unflagged RSN network used
+ * to fall all the way through bas_ie_classify() to "WEP" on the strength of
+ * its privacy bit -- so an ordinary 802.11r enterprise network was reported
+ * as the single most damning finding the instrument can produce.
+ *
+ * The fast-transition variants are the ones that made this urgent: FT is
+ * standard on enterprise and mesh gear, and its AKM numbers are nowhere near
+ * the base ones. */
+#define AKM_8021X          1u
+#define AKM_PSK            2u
+#define AKM_FT_8021X       3u
+#define AKM_FT_PSK         4u
+#define AKM_8021X_SHA256   5u
+#define AKM_PSK_SHA256     6u
+#define AKM_SAE            8u
+#define AKM_FT_SAE         9u
+#define AKM_SUITE_B       11u
+#define AKM_SUITE_B_192   12u
+#define AKM_FT_8021X_384  13u
+#define AKM_FILS_SHA256   14u
+#define AKM_FILS_SHA384   15u
+#define AKM_FT_FILS_256   16u
+#define AKM_FT_FILS_384   17u
+#define AKM_OWE           18u
+#define AKM_FT_PSK_384    19u
+#define AKM_PSK_SHA384    20u
+#define AKM_SAE_EXT       24u
+#define AKM_FT_SAE_EXT    25u
 
 static const uint8_t k_oui_rsn[3] = { 0x00, 0x0F, 0xAC };
 static const uint8_t k_oui_ms[3]  = { 0x00, 0x50, 0xF2 };
@@ -55,12 +82,42 @@ static void parse_rsn(const uint8_t *p, size_t len, bas_posture_t *o)
         if (memcmp(s, k_oui_rsn, 3) != 0) {
             continue;                             /* vendor-specific AKM  */
         }
+        o->akm_count++;
         switch (s[3]) {
-        case AKM_8021X: o->akm_enterprise = true; break;
-        case AKM_PSK:   o->akm_psk        = true; break;
-        case AKM_SAE:   o->akm_sae        = true; break;
-        case AKM_OWE:   o->akm_owe        = true; break;
-        default: break;
+        case AKM_8021X:
+        case AKM_FT_8021X:
+        case AKM_8021X_SHA256:
+        case AKM_SUITE_B:
+        case AKM_SUITE_B_192:
+        case AKM_FT_8021X_384:
+        case AKM_FILS_SHA256:
+        case AKM_FILS_SHA384:
+        case AKM_FT_FILS_256:
+        case AKM_FT_FILS_384:
+            o->akm_enterprise = true;
+            break;
+        case AKM_PSK:
+        case AKM_FT_PSK:
+        case AKM_PSK_SHA256:
+        case AKM_FT_PSK_384:
+        case AKM_PSK_SHA384:
+            o->akm_psk = true;
+            break;
+        case AKM_SAE:
+        case AKM_FT_SAE:
+        case AKM_SAE_EXT:
+        case AKM_FT_SAE_EXT:
+            o->akm_sae = true;
+            break;
+        case AKM_OWE:
+            o->akm_owe = true;
+            break;
+        default:
+            /* A suite type from a newer amendment than this table. Recorded so
+             * classification can say "RSN, unrecognised" instead of guessing
+             * -- see bas_ie_classify. */
+            o->akm_unknown = true;
+            break;
         }
     }
     off += (size_t)ac * 4u;
@@ -90,6 +147,12 @@ bas_err_t bas_ie_parse(const uint8_t *ies, size_t len,
 
     if (ies == NULL && len != 0u) {
         return BAS_ERR_ARG;
+    }
+
+    if (ap != NULL) {
+        /* Its own beacon has now been read, so an empty WPS record from here
+         * means "advertises none" rather than "never heard one". */
+        ap->ie_seen = true;
     }
 
     size_t off = 0;
@@ -170,7 +233,18 @@ bas_err_t bas_ie_parse(const uint8_t *ies, size_t len,
                 if (body[3] == 0x04u) {           /* WPS                   */
                     bas_wps_t scratch;
                     bas_wps_t *w = (ap != NULL) ? &ap->wps : &scratch;
-                    memset(w, 0, sizeof(*w));
+                    /* Clear only on the FIRST WSC element.
+                     *
+                     * A frame may carry more than one -- the attributes are
+                     * split across them when they exceed 255 bytes, which is
+                     * ordinary for an AP that advertises a long device name.
+                     * Clearing per element meant the last one won and erased
+                     * everything the earlier ones carried, so an AP could
+                     * advertise a PIN method and still be graded on an empty
+                     * record. Later elements now add to the record. */
+                    if (!out->wps_present) {
+                        memset(w, 0, sizeof(*w));
+                    }
                     w->present = true;
                     if (!wps_attrs(body + 4, (size_t)elen - 4u, w)) {
                         out->truncated = true;
@@ -224,6 +298,16 @@ bas_sec_t bas_ie_classify(const bas_posture_t *p, bool privacy_bit)
     }
     if (p->akm_psk) {
         return p->rsn_present ? BAS_SEC_WPA2 : BAS_SEC_WPA;
+    }
+    /* An RSN or WPA element means WPA-or-better, whatever its AKM. Reaching
+     * the WEP branch from here would report the most damning finding the
+     * instrument can produce on the basis of a suite number this parser did
+     * not happen to know -- and every future amendment adds more of those.
+     *
+     * "I could not identify it" is a different claim from "it is WEP", and
+     * only one of them is true. */
+    if (p->rsn_present || p->akm_unknown) {
+        return BAS_SEC_UNKNOWN;
     }
     if (privacy_bit) {
         return BAS_SEC_WEP;

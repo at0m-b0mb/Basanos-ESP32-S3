@@ -93,13 +93,20 @@ const char *bas_ble_kind_name(bas_ble_kind_t k)
 {
     switch (k) {
     case BAS_BLE_BASANOS:   return "ours";
-    case BAS_BLE_FINDMY:    return "Find My tracker";
-    case BAS_BLE_APPLE:     return "Apple";
-    case BAS_BLE_TILE:      return "Tile tracker";
-    case BAS_BLE_SMARTTAG:  return "SmartTag";
-    case BAS_BLE_FASTPAIR:  return "Fast Pair";
-    case BAS_BLE_MICROSOFT: return "Swift Pair";
-    case BAS_BLE_FLIPPER:   return "Flipper Zero";
+    /* Hedged, every one of them.
+     *
+     * These are inferred from a company identifier and a payload shape, which
+     * anything may transmit. The file already promised elsewhere that the
+     * interface says "looks like Find My" rather than "is an AirTag" -- these
+     * strings were the place that promise was not kept, and the SmartTag rule
+     * fires on a bare Samsung company ID that any Samsung device may send. */
+    case BAS_BLE_FINDMY:    return "~Find My";
+    case BAS_BLE_APPLE:     return "~Apple";
+    case BAS_BLE_TILE:      return "~Tile";
+    case BAS_BLE_SMARTTAG:  return "~Samsung";
+    case BAS_BLE_FASTPAIR:  return "~Fast Pair";
+    case BAS_BLE_MICROSOFT: return "~Swift Pair";
+    case BAS_BLE_FLIPPER:   return "~Flipper";
     default:                return "unknown";
     }
 }

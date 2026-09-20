@@ -56,9 +56,15 @@ jobs:
           cp build/basanos-esp32s3.bin _site/firmware.bin
           cp assets/banner.svg _site/ 2>/dev/null || true
           # The manifest points at the same-origin copy, never the release.
-          # The nearest tag, so the page names the release rather than the
-          # branch it happened to be built from.
-          VER="$(git describe --tags --abbrev=0 2>/dev/null || echo dev)"
+          #
+          # The EXACT build, not the nearest tag. This page rebuilds on every
+          # push to main, so --abbrev=0 advertised "v1.1.1" while serving a
+          # binary four commits past it -- anyone reporting a bug would cite a
+          # version that never contained the code they were running. Plain
+          # git describe gives "v1.1.1" on the tag itself and
+          # "v1.1.1-4-gabc1234" anywhere after it, which is the truth in both
+          # cases.
+          VER="$(git describe --tags 2>/dev/null || echo dev)"
           sed -i "s/__VERSION__/${VER}/" _site/manifest.json
 
       - uses: actions/upload-pages-artifact@v3

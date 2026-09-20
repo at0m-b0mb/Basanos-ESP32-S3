@@ -235,7 +235,15 @@ static void survey(void)
     bool was_listening = bas_sniff_active();
     if (was_listening) { bas_sniff_stop(); }
 
-    bas_scan_reset(&s_scan);
+    /* Aged, not cleared.
+     *
+     * A reset threw away the information elements the promiscuous receiver
+     * had gathered -- a scan returns none of its own -- so running 'scan'
+     * after 'sniff' erased every WPS finding and the survey then reported
+     * those networks as advertising none. Entries that are genuinely gone
+     * still drop out below, after the sweep has had its chance to re-see
+     * them. */
+    const uint32_t scan_started_ms = now_ms();
 
     wifi_scan_config_t cfg = {
         .ssid = NULL, .bssid = NULL, .channel = 0,
@@ -281,6 +289,12 @@ static void survey(void)
         }
         free(recs);
     }
+
+    /* Anything not re-seen by this sweep is gone. Dropping them here rather
+     * than clearing up front is what lets an AP keep the elements a previous
+     * listen gathered while still leaving the list honest about what is
+     * actually in range. */
+    bas_scan_expire(&s_scan, scan_started_ms);
 
     bas_scan_sort_rssi(&s_scan);
     if (was_listening) { bas_sniff_start(0); }
@@ -620,8 +634,16 @@ static void console_crack(const bas_cmd_t *c)
             bas_console_reply("      credential. The PIN alone is the finding.");
             return;
         }
-        bas_console_reply("      not vulnerable: the registrar's secret nonces");
-        bas_console_reply("      were not any value a broken generator makes");
+        /* Only the classes actually tried can be ruled out. A flat "not
+         * vulnerable" is a clean bill of health this one exchange did not
+         * earn -- the registrar path was tested, the published enrollee-side
+         * direction was not, and neither was any seed outside the swept
+         * window. */
+        bas_console_reply("      no weak nonce found. The registrar's secrets");
+        bas_console_reply("      were none of the classes tested (zero, reused");
+        bas_console_reply("      nonce, clock-seeded within the swept window).");
+        bas_console_reply("      That is not a clean bill of health: the");
+        bas_console_reply("      enrollee-side direction was not tested.");
         bas_console_reply("      (%u candidates tested)",
                           (unsigned)r.pixie.tried);
     } else {
@@ -649,6 +671,18 @@ static void console_crack(const bas_cmd_t *c)
     for (int i = 0; i < n; i++) {
         if (s_abort) {
             bas_console_reply("      aborted at %d/%d", i, n);
+            return;
+        }
+        /* Re-checked every candidate, not once at the start.
+         *
+         * Twenty-four exchanges at twenty seconds each is eight minutes of
+         * association attempts, and the engagement is the thing that says any
+         * of it is allowed. Checking only on entry meant a TTL that lapsed
+         * mid-run did not stop it -- the same lapse that stops a frame burst
+         * in flight has to stop this one too. */
+        if (bas_engage_remaining_ms(&s_engage, now_ms()) == 0u) {
+            bas_console_reply("      engagement expired at %d/%d — stopped",
+                              i, n);
             return;
         }
         static bas_wpsatk_result_t a;
@@ -687,8 +721,18 @@ static void console_crack(const bas_cmd_t *c)
     bas_console_reply("      most firmware locks out long before the end. The");
     bas_console_reply("      two attacks above are the ones worth reporting.");
     bas_console_reply("");
-    bas_console_reply("no PIN recovered. That is a finding: this AP's WPS did");
-    bas_console_reply("not fall to either cheap attack.");
+    /* Name only the attacks that actually ran. When the exchange never
+     * reached M4 the Pixie solver had nothing to work on and was never
+     * invoked, so claiming the AP "did not fall" to it reports a test that
+     * did not happen. */
+    if (r.have_material) {
+        bas_console_reply("no PIN recovered. Pixie Dust found no weak nonce in");
+        bas_console_reply("the classes tested, and no derived default matched.");
+    } else {
+        bas_console_reply("no PIN recovered. The derived defaults did not match.");
+        bas_console_reply("Pixie Dust was NOT tested — the exchange never");
+        bas_console_reply("reached M4, so there was nothing to solve.");
+    }
 }
 
 static void console_wps(void)
@@ -698,7 +742,7 @@ static void console_wps(void)
         return;
     }
 
-    unsigned exposed = 0, locked = 0, none = 0, pin_seen = 0;
+    unsigned exposed = 0, locked = 0, none = 0, pin_seen = 0, unheard = 0;
 
     bas_console_reply("WPS survey — %u network(s), nothing transmitted",
                       (unsigned)s_scan.count);
@@ -708,7 +752,14 @@ static void console_wps(void)
         bas_wps_risk_t r = bas_wps_grade(&a->wps);
 
         if (r == BAS_WPS_NONE) {
-            none++;
+            /* A channel scan returns no information elements, so an AP found
+             * only that way has an empty WPS record -- which is not the same
+             * claim as "advertises no WPS", and must not be counted as one. */
+            if (a->ie_seen) {
+                none++;
+            } else {
+                unheard++;
+            }
             continue;
         }
         if (r == BAS_WPS_LOCKED) {
@@ -780,15 +831,31 @@ static void console_wps(void)
     }
 
     bas_console_reply("");
+    if (unheard > 0u) {
+        /* Said before the verdict, because it bounds what the verdict covers.
+         * These networks were seen by the channel scan, which carries no
+         * information elements at all -- nothing has been established about
+         * their WPS either way. */
+        bas_console_reply("%u network(s) have not been heard advertising at "
+                          "all —", unheard);
+        bas_console_reply("  nothing is known about their WPS. Run 'sniff' or "
+                          "'bg' to include them.");
+        bas_console_reply("");
+    }
     if (exposed == 0u) {
-        bas_console_reply("%u exposed, %u locked, %u without WPS",
+        bas_console_reply("%u exposed, %u locked, %u heard advertising none",
                           exposed, locked, none);
         /* Not the same claim as "these networks are secure", and it must not
          * be allowed to read as one. */
-        bas_console_reply("no WPS exposure in what was heard — other findings "
-                          "are unaffected");
+        /* An AP can run WPS without putting the element in its beacons, and
+         * this command only reads beacons. "None advertised" is what was
+         * observed; "no WPS" is a stronger claim than the evidence carries. */
+        bas_console_reply("none advertised WPS in what was heard. An AP can "
+                          "run WPS without");
+        bas_console_reply("announcing it — 'crack CONFIRM' against a locked "
+                          "target settles one.");
     } else {
-        bas_console_reply("%u EXPOSED, %u locked, %u without WPS",
+        bas_console_reply("%u EXPOSED, %u locked, %u heard advertising none",
                           exposed, locked, none);
         /* Only claim a PIN method where one was actually advertised. Most
          * beacons omit Config Methods entirely, and saying "an exposed PIN
@@ -1270,6 +1337,10 @@ static void console_exec(const bas_cmd_t *c)
             int n = 0;
             const bas_ble_dev_t *d = bas_ble_devices(&n);
             bas_console_reply("%d devices seen", n);
+            /* Same caveat as the screen: these kinds are inferred from a
+             * company identifier and a payload shape, which anything may
+             * transmit. */
+            bas_console_reply("  ~ = looks like, not an identification");
             int trackers = 0;
             for (int i = 0; i < n && i < 14; i++) {
                 char mac[18];
@@ -1499,6 +1570,13 @@ void app_main(void)
     /* Which menu launched a recovery, so dismissing it returns there. */
     bool wps_from_wifi = false;
     bool widened_ch = false;
+    /* ST_WPS_RUN holds its result across passes: the attack runs once, and the
+     * screen stays up until it is dismissed. */
+    bool     wps_ran = false;
+    char     wps_title[24] = {0};
+    char     wps_l1[40] = {0};
+    char     wps_l2[72] = {0};   /* a WPA passphrase runs to 63 characters */
+    uint16_t wps_accent = TH_WARN;
     /* When the glass was first touched on an arming screen, so a
      * passing contact is not mistaken for the start of an arm. */
     uint32_t touch_arm_since = 0;
@@ -1693,7 +1771,11 @@ void app_main(void)
                     cur_fams = WIFI_FAMS; cur_fam_n = WIFI_FAM_N;
                     st_cur = ST_ATTACKS; atk_sel = 0;
                     break;
-                case 3: wps_from_wifi = true; st_cur = ST_WPS_RUN; break;
+                case 3:
+                    wps_from_wifi = true;
+                    wps_ran = false;   /* a fresh run, not last one's result */
+                    st_cur = ST_WPS_RUN;
+                    break;
                 case 4: bas_engage_clear(&s_engage); break;
                 default: break;
                 }
@@ -1721,8 +1803,14 @@ void app_main(void)
 
         case ST_TARGET:
             if (redraw) { bas_ui_target(&s_scan.ap[net_sel], -1); redraw = false; }
-            if (back) { st_cur = ST_NETWORKS; redraw = true; }
-            if (tap || accept) {
+            /* else-if, not two ifs. Both can be true in one poll -- a
+             * hold-RIGHT back arriving alongside a stray tap -- and the
+             * second branch then overwrote the navigation, so going back
+             * opened the keyboard instead. */
+            if (back) {
+                st_cur = ST_NETWORKS;
+                redraw = true;
+            } else if (tap || accept) {
                 label[0] = '\0';
                 label_is_area = false;
                 st_cur = ST_LABEL;
@@ -2029,7 +2117,11 @@ void app_main(void)
                                          BAS_GRACE_DEFAULT_MS);
                 s_scoring_run = run_idx;
 
+                /* Zeroed here as well as inside bas_tx_run. The discard
+                 * below turns on res.frames_sent, and a garbage value there
+                 * keeps a run that never transmitted on the scorecard. */
                 bas_tx_result_t res;
+                memset(&res, 0, sizeof(res));
                 esp_err_t rc = bas_tx_run(&plan, &s_engage, role, tx_tick,
                                           &ctx, &res);
                 run_frames = res.frames_sent;
@@ -2040,6 +2132,22 @@ void app_main(void)
                 bas_engage_note_run(&s_engage);
                 role = BAS_ROLE_OPERATOR;
 
+                /* Nothing on air means nothing to score -- whether the
+                 * run was refused outright or merely emitted nothing.
+                 *
+                 * This used to be an `else if`, so a REFUSED run skipped the
+                 * discard entirely: bas_card_begin had already opened it and
+                 * bas_card_end closed it, and it then aged into a MISSED that
+                 * blamed the detector for a burst the radio never sent. That
+                 * is the one output this instrument must never produce. */
+                if (res.frames_sent == 0u && run_idx >= 0 &&
+                    run_idx == (int)s_card.count - 1) {
+                    s_card.count--;
+                    memset(&s_card.r[run_idx], 0, sizeof(s_card.r[run_idx]));
+                    run_idx = -1;
+                    s_scoring_run = -1;
+                }
+
                 if (rc != ESP_OK) {
                     bas_ui_note("REFUSED", esp_err_to_name(rc),
                                 bas_err_str(res.stopped_by), TH_STOP);
@@ -2048,13 +2156,9 @@ void app_main(void)
                 } else if (res.frames_sent == 0u) {
                     /* Discard rather than let it age into a MISSED that blames
                      * the detector for the transmitter's failure. */
+                    /* Already discarded above -- this branch only reports. */
                     ESP_LOGW(TAG, "run discarded: 0 sent, %u rejected",
                              (unsigned)res.tx_errors);
-                    if (run_idx >= 0 && run_idx == (int)s_card.count - 1) {
-                        s_card.count--;
-                        memset(&s_card.r[run_idx], 0, sizeof(s_card.r[run_idx]));
-                        run_idx = -1;
-                    }
                     bas_ui_tx_failed(f, &res);
                     vTaskDelay(pdMS_TO_TICKS(400));
                     while (input_poll() == EV_NONE) {
@@ -2321,6 +2425,7 @@ void app_main(void)
                     redraw = true;
                 } else {
                     wps_from_wifi = false;
+                    wps_ran = false;   /* a fresh run, not last one's result */
                     st_cur = ST_WPS_RUN;
                     redraw = true;
                 }
@@ -2329,56 +2434,85 @@ void app_main(void)
         }
 
         case ST_WPS_RUN: {
-            /* One exchange, then the offline solve. Drawn before the work
-             * starts because the exchange blocks for up to thirty seconds and
-             * a frozen screen reads as a crash. */
-            bas_ui_note("WPS recovery",
-                        "One exchange, then",
-                        "solving offline...", TH_WARN);
-
-            static bas_wpsatk_result_t wr;
-            memset(&wr, 0, sizeof(wr));
-            (void)bas_wpsatk_try(12345670u, 30000u, &wr);
-
-            if (wr.have_material) {
-                bas_pixie_run(&wr.material, &wr.pixie);
-            }
-
-            /* A WPA passphrase runs to 63 characters. Sizing this to fit the
-             * screen instead would silently truncate a recovered key, which
-             * is worse than not recovering it: a half-key looks like an
-             * answer. It is stored whole here; the console prints it whole. */
-            static char l1[48], l2[72];
-            if (wr.pixie.found) {
-                static bas_wpsatk_result_t gr;
-                memset(&gr, 0, sizeof(gr));
-                snprintf(l1, sizeof(l1), "PIN %08u",
-                         (unsigned)wr.pixie.pin);
-                bas_ui_note("PIN recovered", l1, "redeeming...", TH_STOP);
-                (void)bas_wpsatk_try(wr.pixie.pin, 30000u, &gr);
-                if (gr.have_cred) {
-                    snprintf(l2, sizeof(l2), "%s", gr.passphrase);
-                    bas_ui_note("Key recovered", l1, l2, TH_STOP);
-                } else {
-                    bas_ui_note("PIN recovered", l1,
-                                "no key returned", TH_STOP);
+            /* Runs ONCE, then holds the result until it is dismissed.
+             *
+             * This used to do the work on every pass of the main loop, because
+             * the dismissal test read `back`/`accept`/`tap` that were sampled
+             * at the top of the loop -- before a call that blocks for up to
+             * thirty seconds. The input was always stale by the time it was
+             * read, the case re-entered, and the attack ran again. Against a
+             * real access point that is an unbounded loop of association
+             * attempts that would trip its WPS lockout within a minute and
+             * keep hammering it until the battery died.
+             *
+             * The engagement is re-checked here rather than only at the screen
+             * that led here: reaching this state does not prove the lock is
+             * still live, and the exchange below associates with the AP. */
+            if (!wps_ran) {
+                if (bas_engage_remaining_ms(&s_engage, now_ms()) == 0u) {
+                    bas_ui_note("Engagement expired", "Lock it again before",
+                                "attacking.", TH_STOP);
+                    vTaskDelay(pdMS_TO_TICKS(1800));
+                    st_cur = wps_from_wifi ? ST_WIFI : ST_WPS;
+                    redraw = true;
+                    break;
                 }
-            } else if (wr.have_cred) {
-                snprintf(l1, sizeof(l1), "default PIN 12345670");
-                snprintf(l2, sizeof(l2), "%s", wr.passphrase);
-                bas_ui_note("Key recovered", l1, l2, TH_STOP);
-            } else if (wr.have_material) {
-                /* A real finding, and it must not read as a failure of the
-                 * tool: the registrar's nonces were sound. */
-                bas_ui_note("Not vulnerable", "Registrar nonces were",
-                            "not predictable.", TH_OK);
-            } else {
-                bas_ui_note("No WPS exchange", "The AP did not answer",
-                            "an enrollee.", TH_WARN);
+
+                bas_ui_note("WPS recovery", "One exchange, then",
+                            "solving offline...", TH_WARN);
+
+                static bas_wpsatk_result_t wr;
+                memset(&wr, 0, sizeof(wr));
+                (void)bas_wpsatk_try(12345670u, 30000u, &wr);
+
+                if (wr.have_material) {
+                    bas_pixie_run(&wr.material, &wr.pixie);
+                }
+
+                if (wr.pixie.found) {
+                    snprintf(wps_l1, sizeof(wps_l1), "PIN %08u",
+                             (unsigned)wr.pixie.pin);
+                    bas_ui_note("PIN recovered", wps_l1, "redeeming...",
+                                TH_STOP);
+
+                    static bas_wpsatk_result_t gr;
+                    memset(&gr, 0, sizeof(gr));
+                    (void)bas_wpsatk_try(wr.pixie.pin, 30000u, &gr);
+
+                    snprintf(wps_title, sizeof(wps_title), "%s",
+                             gr.have_cred ? "Key recovered" : "PIN recovered");
+                    snprintf(wps_l2, sizeof(wps_l2), "%s",
+                             gr.have_cred ? gr.passphrase : "no key returned");
+                    wps_accent = TH_STOP;
+                } else if (wr.have_cred) {
+                    snprintf(wps_title, sizeof(wps_title), "Key recovered");
+                    snprintf(wps_l1, sizeof(wps_l1), "default PIN 12345670");
+                    snprintf(wps_l2, sizeof(wps_l2), "%s", wr.passphrase);
+                    wps_accent = TH_STOP;
+                } else if (wr.have_material) {
+                    /* Only the classes actually tried can be ruled out, and
+                     * saying otherwise would hand an operator a clean bill of
+                     * health this exchange did not earn. */
+                    snprintf(wps_title, sizeof(wps_title), "No weak nonces");
+                    snprintf(wps_l1, sizeof(wps_l1), "Registrar nonces not");
+                    snprintf(wps_l2, sizeof(wps_l2), "in the tested classes");
+                    wps_accent = TH_OK;
+                } else {
+                    snprintf(wps_title, sizeof(wps_title), "No WPS exchange");
+                    snprintf(wps_l1, sizeof(wps_l1), "The AP did not answer");
+                    snprintf(wps_l2, sizeof(wps_l2), "an enrollee.");
+                    wps_accent = TH_WARN;
+                }
+                wps_ran = true;
+                /* The input sampled before a thirty-second block is stale, and
+                 * acting on it here would dismiss the result the operator has
+                 * not seen yet. Wait for a fresh press. */
+                break;
             }
-            /* Stay put until dismissed: a recovered key must not vanish while
-             * the operator is reaching for a notebook. */
+
+            bas_ui_note(wps_title, wps_l1, wps_l2, wps_accent);
             if (back || accept || tap) {
+                wps_ran = false;
                 st_cur = wps_from_wifi ? ST_WIFI : ST_WPS;
                 redraw = true;
             }

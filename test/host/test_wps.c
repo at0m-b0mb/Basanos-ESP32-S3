@@ -202,3 +202,55 @@ void suite_wps(void)
     CHECK(p.wps_present == ap.wps.present);
     CHECK(p.wps_locked  == ap.wps.locked);
 }
+
+void suite_wps_split(void)
+{
+    SUITE("wps: attributes split across two elements are merged, not replaced");
+
+    /* WSC attributes are split across elements when they exceed 255 bytes,
+     * which is ordinary for an AP advertising a long device name. Clearing the
+     * record per element meant the last one won: an AP that announced a PIN
+     * method in the first element and a device name in the second was graded
+     * on an empty record and reported as "methods unknown". */
+    static const uint8_t split[] = {
+        0x00, 0x03, 's','p','l',
+        0x03, 0x01, 0x01,
+        /* first element: locked=0, config methods = Label|Display|Keypad */
+        WPS_HDR(0x0F),
+        0x10, 0x57, 0x00, 0x01, 0x00,
+        0x10, 0x08, 0x00, 0x02, 0x01, 0x0C,
+        /* second element: state + manufacturer */
+        WPS_HDR(0x13),                            /* 4 + 5 + 10 bytes     */
+        0x10, 0x44, 0x00, 0x01, 0x02,
+        0x10, 0x21, 0x00, 0x06, 'R','a','l','i','n','k',
+    };
+    bas_ap_t ap;
+    bas_posture_t p;
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(split, sizeof(split), &ap, &p) == BAS_OK);
+
+    CHECK(ap.wps.present);
+    /* From the FIRST element -- this is what used to be erased. */
+    CHECK((ap.wps.config_methods & BAS_WPS_CM_LABEL) != 0u);
+    CHECK((ap.wps.config_methods & BAS_WPS_CM_KEYPAD) != 0u);
+    /* From the SECOND. */
+    CHECK(ap.wps.configured);
+    CHECK(strcmp(ap.wps.manufacturer, "Ralink") == 0);
+    /* And the grade reflects both. */
+    CHECK(bas_wps_grade(&ap.wps) == BAS_WPS_PIN_OPEN);
+    CHECK(bas_wps_grade(&ap.wps) != BAS_WPS_ON_UNKNOWN);
+
+    /* Order must not matter: methods in the second element work too. */
+    static const uint8_t split_rev[] = {
+        0x00, 0x03, 'r','e','v',
+        WPS_HDR(0x09),
+        0x10, 0x44, 0x00, 0x01, 0x02,
+        WPS_HDR(0x0F),
+        0x10, 0x57, 0x00, 0x01, 0x00,
+        0x10, 0x08, 0x00, 0x02, 0x01, 0x0C,
+    };
+    memset(&ap, 0, sizeof(ap));
+    CHECK(bas_ie_parse(split_rev, sizeof(split_rev), &ap, &p) == BAS_OK);
+    CHECK(ap.wps.configured);
+    CHECK(bas_wps_grade(&ap.wps) == BAS_WPS_PIN_OPEN);
+}
