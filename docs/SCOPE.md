@@ -53,9 +53,14 @@ took place in. None of it transmits.
   whose baseline is known.
 - **Frame monitor** — frame-type counters during a run, so "the detector was
   busy" is a measurable claim rather than an excuse.
-- **Capture export** — the packet record that accompanies an engagement report.
-- **Posture findings** — WPS exposure and hidden-network naming, recorded
-  passively as part of the survey.
+- **Posture findings** — WPS exposure, graded from the beacon alone and
+  recorded passively as part of the survey.
+
+Two things listed here previously are not built, and are named as gaps rather
+than left reading as capabilities: **capture export** (there is no pcap writer
+in the tree) and **hidden-network naming** (the receiver parses beacons and
+probe requests, not the probe responses and association requests that would
+carry the name).
 
 ---
 
@@ -64,15 +69,27 @@ took place in. None of it transmits.
 These are absent by decision, not by omission. Each would be straightforward to
 build; none of them would move a number on a scorecard.
 
-**Credential capture in every form.** No captive portal, no cloned sign-in
-page, no credential store. The instrument emits signals; it never collects
-secrets. A harvested password does not tell a customer whether their detection
+**Credential capture from people.** No captive portal, no cloned sign-in page,
+no credential store. The instrument never deceives a person into handing over a
+secret. Recovering a network's own key from a protocol flaw in its router --
+see WPS above -- is a different act, and is in scope. A harvested password does not tell a customer whether their detection
 works, and building the capability creates custody and liability for material
 the engagement has no reason to hold.
 
-**Key-material capture.** Four-way handshake and PMKID collection are passive,
-so no detector can observe them happening. They grade nothing and produce only
-offline-crackable material.
+**Key material kept.** This reasoning changed, and the document has been
+corrected rather than left standing.
+
+Three families now touch key material, because each one is *solicited* and so
+is exactly what a sensor is supposed to notice: PMKID solicitation draws EAPOL
+M1 with an association request, the passphrase audit captures a handshake it
+forces, and WPS PIN recovery associates with the access point. The original
+claim that these are passive was wrong.
+
+What remains out of scope is *keeping* any of it. The PMKID family records
+only that a PMKID was offered and has no buffer for the value. The passphrase
+audit runs on the device and wipes the handshake, asserted byte by byte by a
+test. A recovered WPS credential is shown on the screen and written nowhere.
+The finding is the deliverable; custody of the key is not.
 
 **Brand impersonation.** The instrument never presents itself as a named
 company, product or service. Synthetic networks and advertisements it creates

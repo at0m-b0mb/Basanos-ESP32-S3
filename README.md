@@ -5,7 +5,7 @@
 <p align="center">
   <a href="#authorised-testing-only"><img alt="authorised use only" src="https://img.shields.io/badge/use-authorised%20testing%20only-8C3A2E?style=flat-square"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-ESP32--S3-8A6D2F?style=flat-square">
-  <img alt="tests" src="https://img.shields.io/badge/host%20checks-587-3F6B4A?style=flat-square">
+  <img alt="tests" src="https://img.shields.io/badge/host%20checks-2640-3F6B4A?style=flat-square">
   <img alt="licence" src="https://img.shields.io/badge/licence-MIT-4A443A?style=flat-square">
 </p>
 
@@ -119,12 +119,19 @@ A family that grades nothing does not ship.
 | Channel analyser | passive | Occupancy per channel, and refuses to name one it never listened to |
 | Client enumeration | passive | Stations attributed to cells, randomised addresses flagged |
 | Probe log | passive | The names nearby devices ask for — their own history, leaking |
+| WPS survey | passive | Exposure graded from the beacon alone; nothing is sent |
+| WPS PIN recovery | active | Derived-default and Pixie Dust, and the passphrase itself |
 | BLE advertisements | benign | Advertiser multiplicity and channel-balance scoring |
+| BLE name churn | benign | One address, many names — identity tracking survives it |
+| BLE proximity beacon | benign | Proximity-payload shapes a scanner claims to classify |
 | BLE tracker dwell | benign | Dwell-span separates a follower from fixed furniture |
+| BLE tracker swarm | benign | Many persistent identities at once, not one |
+| BLE rogue peripheral | active | A connectable device where none belongs |
 | HID keystroke timing | benign | Injection-timing detection reacts, and how fast |
 
-Seven of the ten are things an ordinary handset produces unprompted. Three deny
-service to something real, and those three are gated accordingly.
+Most of these are things an ordinary handset produces unprompted. Five deny
+service to something real, and those five are gated behind the arming gesture,
+the admin role and a live engagement.
 
 ### The scorecard, and why it is fair
 
@@ -249,8 +256,9 @@ None of it transmits.
 These are missing by decision, not oversight. Each would be straightforward to
 build; none would move a number on a scorecard.
 
-**Exported key material.** Both families that touch key material give you the
-finding and keep nothing.
+**Exported key material.** Nothing crackable is written to the card, the
+console or the log — including a recovered WPS passphrase, which is shown on
+the screen and never stored.
 
 The **PMKID** family solicits EAPOL M1 and records *whether a PMKID was
 offered* — never the value. There is no buffer for it anywhere in the firmware.
@@ -270,10 +278,17 @@ than implying the key is strong.
 TinyUSB taking the port, and the USB-Serial/JTAG console — the device's control
 channel — disappears with it. That trade is not worth making here.
 
-**Credential capture in every form.** No captive portal, no cloned sign-in
-page, no credential store. A harvested password does not tell a customer
+**Credential capture from people.** No captive portal, no cloned sign-in page,
+no credential store. Phishing a human for a password does not tell a customer
 whether their detection works, and building the capability creates custody of
 material the engagement has no reason to hold.
+
+That is a different thing from **WPS PIN recovery**, which is present and
+deliberate. It takes the network's own key out of a protocol flaw in the
+router — no person is deceived and nothing is impersonated — and it is the
+finding that actually gets WPS turned off. "WPS is enabled" gets filed; the
+passphrase on a slide does not. The credential is displayed and never written
+anywhere, so the engagement holds no custody of it after the screen changes.
 
 **Brand impersonation.** Synthetic networks and advertisements carry a fixed
 `BASANOS-` prefix, so a third party sniffing the room identifies a test rig
@@ -367,11 +382,11 @@ components/engine/   targets, engagement lock, families, ceilings,
 components/rbac/     roles, SHA-256 / HMAC / PBKDF2, lockout
 components/score/    the scorecard and alarm ingest
 main/                display, touch, power, radio, screens, console
-test/host/           587 checks, no hardware required
+test/host/           2640 checks, no hardware required
 ```
 
 ```bash
-make -C test/host          # 587 checks
+make -C test/host          # 2640 checks
 make -C test/host asan     # the same under ASan + UBSan
 ```
 
@@ -386,7 +401,7 @@ the device halts on that screen rather than showing a target picker.**
 
 | Layer | State |
 |---|---|
-| Engine, RBAC, scorecard | ✅ 587 host checks, ASan + UBSan clean |
+| Engine, RBAC, scorecard | ✅ 2640 host checks, ASan + UBSan clean |
 | Display, touch, power, survey | ✅ verified on hardware |
 | Wi-Fi transmit | ✅ verified — 436 frames, 0 rejected |
 | Wi-Fi families | ✅ deauth, disassoc, auth flood, evil twin, beacon, probe |
@@ -401,6 +416,12 @@ the device halts on that screen rather than showing a target picker.**
 | BLE scanner and tracker detection | ✅ verified — 26 devices, 6 trackers classified |
 | WPA2 crypto | ✅ verified against FIPS 180-2, RFC 2202/6070 and 802.11i H.4 |
 | Passphrase audit | ✅ capture and audit path working; wipe asserted |
+| WPS exposure survey | ✅ verified — graded from beacons, nothing transmitted |
+| WPS PIN recovery / Pixie Dust | ⚠️ builds and self-tests; **never yet run against a WPS-enabled AP** |
+| Whole-cell and per-client targeting | ✅ verified — 80 frames whole-cell, 0 rejected |
+| Continuous runs | ✅ verified — run until stopped, engagement still bounds it |
+| Background discovery | ✅ verified — idle passive survey, 20→40 networks |
+| Regulatory region | ✅ verified — inferred from country IEs; widens to reach a locked target |
 | HID keystroke timing | 🧱 blocked by design — see below |
 
 Transmission is verified independently rather than by trusting a return code:

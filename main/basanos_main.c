@@ -467,6 +467,8 @@ static void console_help(void)
     bas_console_reply("cell [off]               target every client on the network");
     bas_console_reply("region [fcc|etsi|jp]     regulatory channel clamp");
     bas_console_reply("psk [secs] [CONFIRM]     passphrase strength audit");
+    bas_console_reply("sniff [ch|off]           promiscuous receiver; needed for WPS");
+    bas_console_reply("recon                    what the receiver has heard");
     bas_console_reply("bg [off]                 idle passive network discovery");
     bas_console_reply("blescan [off]            passive BLE device scan");
     bas_console_reply("uart [baud|off]          listen for detector alarms");
